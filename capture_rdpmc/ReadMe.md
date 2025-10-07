@@ -516,6 +516,5 @@ if (err) {
 // (GCC code to move EAX→low, EDX→high)
 
 ```
-```
 
 </details>
