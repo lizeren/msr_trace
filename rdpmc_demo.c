@@ -25,7 +25,7 @@ int main(void) {
     // ECX encoding: bit30=1 ⇒ fixed-function; 0 ⇒ programmable (PMC)
     const uint32_t PMC0   = 0;             // programmable counter 0
     // Table 20-2. Association of Fixed-Function Performance Counters with Architectural Performance Events
-    const uint32_t FIXED0 = 0x40000000u;   // fixed counter 1 = retired instruction
+    const uint32_t FIXED0 = 0x40000000u;   // fixed counter 0 = retired instruction
 
     const uint32_t FIXED1 = 0x40000001u;   // fixed counter 1 = unhalted core cycles
 

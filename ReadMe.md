@@ -105,10 +105,13 @@ sudo rdmsr -p 0 0x30a   # IA32_FIXED_CTR1 (already increasing)
 ```
 
 
+Below, we will configure PMC0 to count the branch instructions retired
+Find the event code and configure `IA32_PERFEVTSEL0`
+
 BR_INST_RETIRED.ALL_BRANCHES Counts all (macro) branch instructions retired. Errata: SKL091 EventSel=C4H UMask=00H Counter=0,1,2,3 CounterHTOff=0,1,2,3,4,5,6,7 Architectural, AtRetirement
 
 https://perfmon-events.intel.com/index.html?pltfrm=skylake.html&evnt=BR_INST_RETIRED.ALL_BRANCHES
-
+https://perfmon-events.intel.com/skylake.html
 
 ```bash
 sudo modprobe msr
@@ -128,6 +131,10 @@ sudo wrmsr -p 0 0x0C1 0                      # IA32_PMC0
 
 # Enable PMC0 (bit 0) globally
 sudo wrmsr -p 0 0x38F 0x1
+
+# Read the counter
+sudo rdmsr -p 0 0x0C1                      # IA32_PMC0
+
 ```
 
 
