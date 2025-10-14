@@ -1,5 +1,47 @@
-## Performance counters
-This page keeps track of performance counters we may use for tracing
+## br_conditional_count
+
+```bash
+sudo sysctl kernel.perf_event_paranoid=1
+gcc -O2 -Wall br_conditional_count.c -o br_conditional_count./br_conditional_count
+./br_conditional_count 20000000
+```
+
+Cross-check with perf stat (alias)
+
+```bash
+perf stat -e br_inst_retired.conditional ./br_conditional_count 20000000
+```
+
+## br_cond_ntaken_count
+
+```bash
+gcc -O2 -Wall -fno-if-conversion -fno-tree-loop-if-convert -fno-tree-vectorize br_cond_ntaken_count.c -o br_cond_ntaken_count
+./br_cond_ntaken_count 20000000 0
+```
+
+Corss-check
+
+```bash
+perf stat -e r10c4 ./br_cond_ntaken_count 20000000 0
+```
+
+
+## br_mispredict_conditional_both
+
+```bash
+gcc -O2 -Wall   -fno-if-conversion -fno-tree-loop-if-convert -fno-tree-vectorize   br_mispredict_conditional_both.c -o br_mispredict_conditional_both
+./br_mispredict_conditional_both 30000000
+```
+
+
+## l1_miss_hit_cycles_test
+
+```bash
+gcc -O2 -Wall l1_miss_hit_cycles_test.c -o l1_miss_hit_cycles_test
+./l1_miss_hit_cycles_test
+```
+
+## Core Voltage
 
 prerequisites
 ```bash
@@ -17,7 +59,6 @@ sudo rdmsr 0x198 -u --bitfield 47:32
 echo "scale=2; $(sudo rdmsr 0x198 -u --bitfield 47:32)/8192" | bc
 ``` 
 
-### Core Voltage 
 unhalted core cycles
 
 Table 20-2. Association of Fixed-Function Performance Counters with Architectural Performance Events
