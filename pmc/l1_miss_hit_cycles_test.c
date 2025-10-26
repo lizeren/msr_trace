@@ -1,3 +1,6 @@
+/*
+This program tests the number of L1 misses and hits.
+*/
 #define _GNU_SOURCE
 #include <asm/unistd.h>
 #include <linux/perf_event.h>

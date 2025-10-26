@@ -1,3 +1,9 @@
+/*
+
+This event counts conditional branch instructions retired.
+
+*/
+
 #define _GNU_SOURCE
 #include <asm/unistd.h>
 #include <linux/perf_event.h>

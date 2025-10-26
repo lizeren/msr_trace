@@ -1,3 +1,7 @@
+/*
+This program counts the number of conditional branches not taken.
+*/
+
 #define _GNU_SOURCE
 #include <asm/unistd.h>
 #include <linux/perf_event.h>

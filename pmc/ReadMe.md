@@ -41,6 +41,23 @@ gcc -O2 -Wall l1_miss_hit_cycles_test.c -o l1_miss_hit_cycles_test
 ./l1_miss_hit_cycles_test
 ```
 
+
+## near_call_counter
+
+```bash
+gcc -O2 -Wall -o near_call_counter near_call_counter.c
+./near_call_counter 100
+```
+
+## near_call_counter_sample
+
+```bash
+gcc -O2 -Wall -o near_call_counter_sample near_call_counter_sample.c -ldl
+./near_call_counter_sample 1000 sample 10
+```
+
+
+
 ## Core Voltage
 
 prerequisites
