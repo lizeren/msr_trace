@@ -62,6 +62,15 @@ struct pmc_ctx {
     int is_started;
 };
 
+// ===== Multi-Event Handle =====
+struct pmc_multi_handle {
+    const char *label;
+    pmc_ctx_t **contexts;          // Array of individual PMC contexts
+    pmc_event_request_t *requests; // Copy of event requests
+    size_t num_events;
+    int all_started;
+};
+
 // ===== Event configuration table =====
 typedef struct {
     pmc_event_type_t type;
@@ -410,5 +419,206 @@ void pmc_destroy(pmc_ctx_t *ctx) {
     }
 
     free(ctx);
+}
+
+// ===== Multi-Event API Implementation =====
+
+pmc_multi_handle_t* pmc_measure_begin(const char *label, 
+                                       const pmc_event_request_t *events,
+                                       size_t num_events) {
+    if (!label || !events || num_events == 0) {
+        pmc_set_error("Invalid parameters to pmc_measure_begin");
+        return NULL;
+    }
+    
+    // Allocate multi-handle
+    pmc_multi_handle_t *handle = calloc(1, sizeof(pmc_multi_handle_t));
+    if (!handle) {
+        pmc_set_error("Failed to allocate multi-handle");
+        return NULL;
+    }
+    
+    handle->label = label;
+    handle->num_events = num_events;
+    handle->all_started = 0;
+    
+    // Allocate arrays
+    handle->contexts = calloc(num_events, sizeof(pmc_ctx_t*));
+    handle->requests = calloc(num_events, sizeof(pmc_event_request_t));
+    
+    if (!handle->contexts || !handle->requests) {
+        pmc_set_error("Failed to allocate arrays");
+        free(handle->contexts);
+        free(handle->requests);
+        free(handle);
+        return NULL;
+    }
+    
+    // Copy requests
+    memcpy(handle->requests, events, num_events * sizeof(pmc_event_request_t));
+    
+    // Create individual PMC contexts for each event
+    for (size_t i = 0; i < num_events; i++) {
+        pmc_config_t config = pmc_get_default_config(
+            events[i].event,
+            events[i].mode,
+            events[i].sample_period
+        );
+        config.precise_ip = events[i].precise_ip;
+        
+        handle->contexts[i] = pmc_create(&config);
+        if (!handle->contexts[i]) {
+            // Cleanup on failure
+            for (size_t j = 0; j < i; j++) {
+                if (handle->contexts[j]) {
+                    pmc_destroy(handle->contexts[j]);
+                }
+            }
+            free(handle->contexts);
+            free(handle->requests);
+            free(handle);
+            return NULL;
+        }
+    }
+    
+    // Start all measurements
+    for (size_t i = 0; i < num_events; i++) {
+        if (pmc_start(handle->contexts[i]) != 0) {
+            // Continue with other events even if one fails
+            fprintf(stderr, "Warning: Failed to start event %s\n", 
+                    pmc_event_name(events[i].event));
+        }
+    }
+    
+    handle->all_started = 1;
+    return handle;
+}
+
+void pmc_measure_end(pmc_multi_handle_t *handle, int report) {
+    if (!handle) return;
+    
+    // Stop all measurements
+    if (handle->all_started) {
+        for (size_t i = 0; i < handle->num_events; i++) {
+            if (handle->contexts[i]) {
+                pmc_stop(handle->contexts[i]);
+            }
+        }
+    }
+    
+    // Report if requested
+    if (report) {
+        pmc_report_all(handle);
+    }
+    
+    // Cleanup
+    for (size_t i = 0; i < handle->num_events; i++) {
+        if (handle->contexts[i]) {
+            pmc_destroy(handle->contexts[i]);
+        }
+    }
+    
+    free(handle->contexts);
+    free(handle->requests);
+    free(handle);
+}
+
+void pmc_report_all(pmc_multi_handle_t *handle) {
+    if (!handle) return;
+    
+    printf("\n========== PMC Report: %s ==========\n", handle->label);
+    
+    for (size_t i = 0; i < handle->num_events; i++) {
+        pmc_ctx_t *ctx = handle->contexts[i];
+        if (!ctx) continue;
+        
+        const char *event_name = pmc_event_name(handle->requests[i].event);
+        
+        if (handle->requests[i].mode == PMC_MODE_COUNTING) {
+            // Counting mode - just print count
+            uint64_t count = 0;
+            if (pmc_read_count(ctx, &count) == 0) {
+                printf("  [%zu] %s: %llu\n", 
+                       i + 1,
+                       event_name,
+                       (unsigned long long)count);
+            }
+        } else {
+            // Sampling mode - print summary
+            pmc_sample_t *samples = NULL;
+            size_t num_samples = 0;
+            
+            if (pmc_read_samples(ctx, &samples, &num_samples, 0) == 0) {
+                uint64_t count = 0;
+                pmc_read_count(ctx, &count);
+                
+                printf("  [%zu] %s:\n", i + 1, event_name);
+                printf("      Total count: %llu\n", (unsigned long long)count);
+                printf("      Samples: %zu (period: %llu)\n", 
+                       num_samples,
+                       (unsigned long long)handle->requests[i].sample_period);
+                
+                if (num_samples > 0) {
+                    printf("      Events per sample: %.1f\n", 
+                           (double)count / num_samples);
+                    
+                    // Print first 3 sample IPs
+                    printf("      First samples: ");
+                    size_t show = num_samples < 3 ? num_samples : 3;
+                    for (size_t j = 0; j < show; j++) {
+                        printf("0x%llx", (unsigned long long)samples[j].ip);
+                        if (j < show - 1) printf(", ");
+                    }
+                    if (num_samples > 3) {
+                        printf(" ... (+%zu more)", num_samples - 3);
+                    }
+                    printf("\n");
+                }
+                
+                free(samples);
+            }
+        }
+    }
+    
+    printf("==========================================\n\n");
+}
+
+int pmc_get_count(pmc_multi_handle_t *handle, pmc_event_type_t event, uint64_t *count) {
+    if (!handle || !count) {
+        pmc_set_error("Invalid parameters");
+        return -1;
+    }
+    
+    // Find the context for this event
+    for (size_t i = 0; i < handle->num_events; i++) {
+        if (handle->requests[i].event == event) {
+            return pmc_read_count(handle->contexts[i], count);
+        }
+    }
+    
+    pmc_set_error("Event not found in measurement set");
+    return -1;
+}
+
+int pmc_get_samples(pmc_multi_handle_t *handle, pmc_event_type_t event,
+                    pmc_sample_t **samples, size_t *num_samples) {
+    if (!handle || !samples || !num_samples) {
+        pmc_set_error("Invalid parameters");
+        return -1;
+    }
+    
+    // Find the context for this event
+    for (size_t i = 0; i < handle->num_events; i++) {
+        if (handle->requests[i].event == event) {
+            if (handle->requests[i].mode != PMC_MODE_SAMPLING) {
+                pmc_set_error("Event is not in sampling mode");
+                return -1;
+            }
+            return pmc_read_samples(handle->contexts[i], samples, num_samples, 0);
+        }
+    }
+    
+    pmc_set_error("Event not found in measurement set");
+    return -1;
 }
 

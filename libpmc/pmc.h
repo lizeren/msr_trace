@@ -63,7 +63,71 @@ typedef struct {
     uint64_t time;     // Timestamp
 } pmc_sample_t;
 
-// ===== API Functions =====
+// ===== Multi-Event Request =====
+typedef struct {
+    pmc_event_type_t event;    // Event to measure
+    pmc_mode_t mode;           // Counting or sampling
+    uint64_t sample_period;    // For sampling mode (ignored in counting)
+    int precise_ip;            // PEBS precision (0-3), 0 recommended for compatibility
+} pmc_event_request_t;
+
+// Forward declaration for multi-event handle
+typedef struct pmc_multi_handle pmc_multi_handle_t;
+
+// ===== Simplified API for LLVM Injection =====
+
+/**
+ * Begin measurement session with multiple events.
+ * This is the ONLY function needed at function entry.
+ * 
+ * @param label Identifier for this measurement (e.g., function name)
+ * @param events Array of events to measure
+ * @param num_events Number of events in array
+ * @return Handle for this measurement session
+ */
+pmc_multi_handle_t* pmc_measure_begin(const char *label, 
+                                       const pmc_event_request_t *events,
+                                       size_t num_events);
+
+/**
+ * End measurement session and optionally report results.
+ * This is the ONLY function needed at function exit.
+ * 
+ * @param handle Handle from pmc_measure_begin
+ * @param report If true, print results to stdout
+ */
+void pmc_measure_end(pmc_multi_handle_t *handle, int report);
+
+/**
+ * Batch report all results (counting + sampling summary).
+ * 
+ * @param handle Handle from pmc_measure_begin
+ */
+void pmc_report_all(pmc_multi_handle_t *handle);
+
+/**
+ * Get specific event count.
+ * 
+ * @param handle Handle from pmc_measure_begin
+ * @param event Event type to query
+ * @param count Output: event count
+ * @return 0 on success, -1 on failure
+ */
+int pmc_get_count(pmc_multi_handle_t *handle, pmc_event_type_t event, uint64_t *count);
+
+/**
+ * Get specific event samples.
+ * 
+ * @param handle Handle from pmc_measure_begin
+ * @param event Event type to query
+ * @param samples Output: pointer to array of samples (caller must free())
+ * @param num_samples Output: number of samples collected
+ * @return 0 on success, -1 on failure
+ */
+int pmc_get_samples(pmc_multi_handle_t *handle, pmc_event_type_t event,
+                    pmc_sample_t **samples, size_t *num_samples);
+
+// ===== Original API (kept for backwards compatibility) =====
 
 /**
  * Get default configuration for an event type.
