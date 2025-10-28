@@ -421,11 +421,177 @@ void pmc_destroy(pmc_ctx_t *ctx) {
     free(ctx);
 }
 
+// ===== CSV Parsing Helpers =====
+
+// Parse event name string to enum
+static int parse_event_name(const char *name, pmc_event_type_t *event) {
+    if (strcmp(name, "PMC_EVENT_NEAR_CALL") == 0) {
+        *event = PMC_EVENT_NEAR_CALL;
+    } else if (strcmp(name, "PMC_EVENT_CONDITIONAL_BRANCH") == 0) {
+        *event = PMC_EVENT_CONDITIONAL_BRANCH;
+    } else if (strcmp(name, "PMC_EVENT_BRANCH_MISPREDICT") == 0) {
+        *event = PMC_EVENT_BRANCH_MISPREDICT;
+    } else if (strcmp(name, "PMC_EVENT_L1_DCACHE_MISS") == 0) {
+        *event = PMC_EVENT_L1_DCACHE_MISS;
+    } else if (strcmp(name, "PMC_EVENT_L1_DCACHE_HIT") == 0) {
+        *event = PMC_EVENT_L1_DCACHE_HIT;
+    } else if (strcmp(name, "PMC_EVENT_CYCLES") == 0) {
+        *event = PMC_EVENT_CYCLES;
+    } else if (strcmp(name, "PMC_EVENT_INSTRUCTIONS") == 0) {
+        *event = PMC_EVENT_INSTRUCTIONS;
+    } else {
+        return -1;
+    }
+    return 0;
+}
+
+// Parse mode string to enum
+static int parse_mode(const char *mode, pmc_mode_t *out_mode) {
+    if (strcmp(mode, "counting") == 0 || strcmp(mode, "COUNTING") == 0) {
+        *out_mode = PMC_MODE_COUNTING;
+    } else if (strcmp(mode, "sampling") == 0 || strcmp(mode, "SAMPLING") == 0) {
+        *out_mode = PMC_MODE_SAMPLING;
+    } else {
+        return -1;
+    }
+    return 0;
+}
+
+// Trim whitespace from string (in-place)
+static void trim_whitespace(char *str) {
+    if (!str) return;
+    
+    // Trim leading
+    char *start = str;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') {
+        start++;
+    }
+    
+    // Trim trailing
+    char *end = start + strlen(start) - 1;
+    while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
+        *end = '\0';
+        end--;
+    }
+    
+    // Move trimmed string to beginning
+    if (start != str) {
+        memmove(str, start, strlen(start) + 1);
+    }
+}
+
+// Load events from CSV file
+static int load_events_from_csv(const char *csv_path, 
+                                pmc_event_request_t **events_out,
+                                size_t *num_events_out) {
+    FILE *fp = fopen(csv_path, "r");
+    if (!fp) {
+        pmc_set_error("Failed to open CSV file: %s", csv_path);
+        return -1;
+    }
+    
+    // First pass: count events (skip header)
+    char line[256];
+    size_t count = 0;
+    int header_skipped = 0;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        trim_whitespace(line);
+        if (strlen(line) == 0 || line[0] == '#') continue;  // Skip empty/comment lines
+        if (!header_skipped) {
+            header_skipped = 1;
+            continue;  // Skip header line
+        }
+        count++;
+    }
+    
+    if (count == 0) {
+        pmc_set_error("No events found in CSV file");
+        fclose(fp);
+        return -1;
+    }
+    
+    // Allocate event array
+    pmc_event_request_t *events = calloc(count, sizeof(pmc_event_request_t));
+    if (!events) {
+        pmc_set_error("Failed to allocate event array");
+        fclose(fp);
+        return -1;
+    }
+    
+    // Second pass: parse events
+    rewind(fp);
+    header_skipped = 0;
+    size_t idx = 0;
+    
+    while (fgets(line, sizeof(line), fp) && idx < count) {
+        trim_whitespace(line);
+        if (strlen(line) == 0 || line[0] == '#') continue;
+        if (!header_skipped) {
+            header_skipped = 1;
+            continue;
+        }
+        
+        // Parse CSV: event_name,mode,sample_period
+        char event_name[64] = {0};
+        char mode_str[32] = {0};
+        uint64_t sample_period = 0;
+        
+        // Simple CSV parsing (doesn't handle quoted strings, but we don't need it)
+        char *token1 = strtok(line, ",");
+        char *token2 = strtok(NULL, ",");
+        char *token3 = strtok(NULL, ",");
+        
+        if (!token1 || !token2 || !token3) {
+            pmc_set_error("Malformed CSV line at event %zu", idx + 1);
+            free(events);
+            fclose(fp);
+            return -1;
+        }
+        
+        strncpy(event_name, token1, sizeof(event_name) - 1);
+        strncpy(mode_str, token2, sizeof(mode_str) - 1);
+        sample_period = strtoull(token3, NULL, 10);
+        
+        trim_whitespace(event_name);
+        trim_whitespace(mode_str);
+        
+        // Parse event type
+        if (parse_event_name(event_name, &events[idx].event) != 0) {
+            pmc_set_error("Unknown event name: %s", event_name);
+            free(events);
+            fclose(fp);
+            return -1;
+        }
+        
+        // Parse mode
+        if (parse_mode(mode_str, &events[idx].mode) != 0) {
+            pmc_set_error("Unknown mode: %s", mode_str);
+            free(events);
+            fclose(fp);
+            return -1;
+        }
+        
+        events[idx].sample_period = sample_period;
+        events[idx].precise_ip = 0;  // Default to 0 for compatibility
+        
+        idx++;
+    }
+    
+    fclose(fp);
+    
+    *events_out = events;
+    *num_events_out = idx;
+    return 0;
+}
+
 // ===== Multi-Event API Implementation =====
 
-pmc_multi_handle_t* pmc_measure_begin(const char *label, 
-                                       const pmc_event_request_t *events,
-                                       size_t num_events) {
+// Helper function to initialize measurement from event array (internal)
+static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
+                                                       const pmc_event_request_t *events,
+                                                       size_t num_events,
+                                                       int should_free_events) {
     if (!label || !events || num_events == 0) {
         pmc_set_error("Invalid parameters to pmc_measure_begin");
         return NULL;
@@ -451,20 +617,26 @@ pmc_multi_handle_t* pmc_measure_begin(const char *label,
         free(handle->contexts);
         free(handle->requests);
         free(handle);
+        if (should_free_events) free((void*)events);
         return NULL;
     }
     
     // Copy requests
     memcpy(handle->requests, events, num_events * sizeof(pmc_event_request_t));
     
+    // Free the input events array if needed (came from CSV load)
+    if (should_free_events) {
+        free((void*)events);
+    }
+    
     // Create individual PMC contexts for each event
     for (size_t i = 0; i < num_events; i++) {
         pmc_config_t config = pmc_get_default_config(
-            events[i].event,
-            events[i].mode,
-            events[i].sample_period
+            handle->requests[i].event,
+            handle->requests[i].mode,
+            handle->requests[i].sample_period
         );
-        config.precise_ip = events[i].precise_ip;
+        config.precise_ip = handle->requests[i].precise_ip;
         
         handle->contexts[i] = pmc_create(&config);
         if (!handle->contexts[i]) {
@@ -486,12 +658,41 @@ pmc_multi_handle_t* pmc_measure_begin(const char *label,
         if (pmc_start(handle->contexts[i]) != 0) {
             // Continue with other events even if one fails
             fprintf(stderr, "Warning: Failed to start event %s\n", 
-                    pmc_event_name(events[i].event));
+                    pmc_event_name(handle->requests[i].event));
         }
     }
     
     handle->all_started = 1;
     return handle;
+}
+
+// Original API - manually specify events array
+pmc_multi_handle_t* pmc_measure_begin(const char *label, 
+                                       const pmc_event_request_t *events,
+                                       size_t num_events) {
+    return pmc_measure_begin_internal(label, events, num_events, 0);
+}
+
+// Simplified API - load events from CSV file
+pmc_multi_handle_t* pmc_measure_begin_csv(const char *label, const char *csv_path) {
+    if (!label) {
+        pmc_set_error("NULL label");
+        return NULL;
+    }
+    
+    // Use default CSV path if not provided
+    const char *path = csv_path ? csv_path : "pmc_events.csv";
+    
+    // Load events from CSV
+    pmc_event_request_t *events = NULL;
+    size_t num_events = 0;
+    
+    if (load_events_from_csv(path, &events, &num_events) != 0) {
+        return NULL;  // Error already set by load_events_from_csv
+    }
+    
+    // Initialize measurement (will free events array)
+    return pmc_measure_begin_internal(label, events, num_events, 1);
 }
 
 void pmc_measure_end(pmc_multi_handle_t *handle, int report) {

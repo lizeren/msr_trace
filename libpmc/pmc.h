@@ -77,8 +77,7 @@ typedef struct pmc_multi_handle pmc_multi_handle_t;
 // ===== Simplified API for LLVM Injection =====
 
 /**
- * Begin measurement session with multiple events.
- * This is the ONLY function needed at function entry.
+ * Begin measurement session with multiple events (manual event specification).
  * 
  * @param label Identifier for this measurement (e.g., function name)
  * @param events Array of events to measure
@@ -88,6 +87,21 @@ typedef struct pmc_multi_handle pmc_multi_handle_t;
 pmc_multi_handle_t* pmc_measure_begin(const char *label, 
                                        const pmc_event_request_t *events,
                                        size_t num_events);
+
+/**
+ * Begin measurement session with events loaded from CSV file.
+ * This is the SIMPLIFIED function for LLVM injection - just needs a label!
+ * 
+ * CSV format (with header):
+ *   event_name,mode,sample_period
+ *   PMC_EVENT_NEAR_CALL,counting,0
+ *   PMC_EVENT_L1_DCACHE_HIT,sampling,1000
+ * 
+ * @param label Identifier for this measurement (e.g., function name)
+ * @param csv_path Path to CSV file (NULL or empty for default "pmc_events.csv")
+ * @return Handle for this measurement session
+ */
+pmc_multi_handle_t* pmc_measure_begin_csv(const char *label, const char *csv_path);
 
 /**
  * End measurement session and optionally report results.

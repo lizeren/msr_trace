@@ -1,3 +1,8 @@
+## release perf_event_paranoid
+```bash
+sudo sysctl kernel.perf_event_paranoid=1
+```
+
 ## example_usage.c
 Currently not working.
 ```bash
