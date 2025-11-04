@@ -1,4 +1,3 @@
-// Simplified version for LLVM 6.0 - wraps only simple expression statements
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/Stmt.h"
@@ -19,6 +18,7 @@ using namespace clang;
 using namespace clang::tooling;
 using namespace clang::ast_matchers;
 
+//  OptionCategory lets us hide all the default clang options displayed in the help, we don’t want those for our tool.
 static llvm::cl::OptionCategory Cat("pmc-insert options");
 
 static llvm::cl::list<std::string> WrapNames(
@@ -32,9 +32,12 @@ static llvm::cl::opt<std::string> IncludeHeader(
 namespace {
 
 struct State {
+// Tracks all source code modifications (insertions, replacements, deletions)
+// Accumulates changes in memory without modifying the actual file yet
+// At the end, R.overwriteChangedFiles() writes everything to disk
   Rewriter R;
   std::unordered_set<std::string> Targets;
-  std::unordered_set<const FileEntry*> IncludedFiles;
+  std::unordered_set<const FileEntry*> IncludedFiles; // Tracks which files have already had the header included
   unsigned TempCounter = 0;
   std::string genTemp(const char* base = "__pmc_tmp") {
     return (std::string(base) + "_" + std::to_string(++TempCounter));
@@ -64,15 +67,17 @@ static SourceRange rangeWithTrailingSemi(const Stmt* S, const ASTContext& Ctx) {
   return SourceRange(begin, afterSemi);
 }
 
+
+// For each CallExpr found, Callback::run() is invoked
 class Callback : public MatchFinder::MatchCallback {
 public:
-  explicit Callback(State& S) : S(S) {}
+  explicit Callback(State& S) : S(S) {} // Constructor
 
   void run(const MatchFinder::MatchResult& Res) override {
-    const auto* CE = Res.Nodes.getNodeAs<CallExpr>("call");
+    const auto* CE = Res.Nodes.getNodeAs<CallExpr>("call"); // Get the CallExpr node
     if (!CE) return;
 
-    const SourceManager& SM = *Res.SourceManager;
+    const SourceManager& SM = *Res.SourceManager; // this contains the source code of the file
     
     const FunctionDecl* FD = CE->getDirectCallee();
     if (!FD) return; // ignore indirects
@@ -88,24 +93,25 @@ public:
     
     if (!S.Targets.count(fname)) return;
 
-    auto& Ctx = *Res.Context;
-    auto& R   = S.R;
-    LangOptions LO = Ctx.getLangOpts();
+    auto& Ctx = *Res.Context; // ASTContext object for accessing the AST
+    auto& R   = S.R; // Rewriter object for modifying source code
+    LangOptions LO = Ctx.getLangOpts(); // Language options for accessing the language options
 
     // Insert header once
+    // If the user doesn't provide a header, skip the block below
     if (!IncludeHeader.empty()) {
-      FileID FID = SM.getMainFileID();
-      const FileEntry* FE = SM.getFileEntryForID(FID);
+      FileID FID = SM.getMainFileID(); // FID is a unique identifier for the current file being processed
+      const FileEntry* FE = SM.getFileEntryForID(FID); // get FileEntry: information about one file (name, size, etc.)
       if (FE && !S.IncludedFiles.count(FE)) {
         R.InsertText(SM.getLocForStartOfFile(FID),
-                     "#include \"" + IncludeHeader + "\"\n");
-        S.IncludedFiles.insert(FE);
+                     "#include \"" + IncludeHeader + "\"\n"); // Insert the #include at the start of the file
+        S.IncludedFiles.insert(FE); // Mark this file as processed
       }
     }
 
     // Helpers - use unique variable names to avoid redefinition
     auto callText = getText(SM, LO, CE->getSourceRange());
-    std::string hvar = S.genTemp("__pmc_h");
+    std::string hvar = S.genTemp(("__pmc_h_" + fname).c_str());
     std::string begin = "void* " + hvar + " = pmc_measure_begin_csv(__func__, NULL); ";
     std::string end   = "pmc_measure_end(" + hvar + ", 1); ";
 
@@ -227,20 +233,20 @@ public:
   Action(std::unordered_set<std::string> Targets) : Targets(std::move(Targets)) {}
 
   void EndSourceFileAction() override {
-    S.R.overwriteChangedFiles();
-  }
+    S.R.overwriteChangedFiles(); // Write all modifications to disk
+  } 
 
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance& CI, llvm::StringRef) override {
-    S.R.setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
+    S.R.setSourceMgr(CI.getSourceManager(), CI.getLangOpts()); // Initialize rewriter with source manager and language options
     S.Targets = std::unordered_set<std::string>(Targets.begin(), Targets.end());
-    Finder.addMatcher(callExpr().bind("call"), &CB);
-    return Finder.newASTConsumer();
+    Finder.addMatcher(callExpr().bind("call"), &CB); // Register the matcher with the name "call", which will find all CallExpr nodes
+    return Finder.newASTConsumer(); // Return consumer that will traverse AST
   }
 private:
-  State S;
-  std::unordered_set<std::string> Targets;
-  MatchFinder Finder;
-  Callback CB{S};
+  State S; // Create State object for tracking all modifications
+  std::unordered_set<std::string> Targets; // Set of target function names we want to wrap
+  MatchFinder Finder; // MatchFinder object for finding matches in the AST
+  Callback CB{S}; // Callback is initialized with reference to S
 };
 
 class ActionFactory : public FrontendActionFactory {
@@ -261,9 +267,18 @@ int main(int argc, const char** argv) {
   CommonOptionsParser OP(argc, argv, Cat);
 
   std::unordered_set<std::string> targets;
-  for (auto& w : WrapNames) targets.insert(w);
+  for (auto& w : WrapNames) targets.insert(w); // name of the target functions we want to wrap
 
+  // OP.getCompilations() - Returns a CompilationDatabase object that contains compilation information 
+  // (compiler flags, include paths, defines, etc.) for each source file
+  // OP.getSourcePathList() - Returns the list of source files to process
   ClangTool Tool(OP.getCompilations(), OP.getSourcePathList());
+
+  // Tool.run(...) - Executes the tool on all source files from OP.getSourcePathList()
+  // Per source file, ClangTool does:
+  // ActionFactory::create() returns new Action(Targets)
+  // -> Action::CreateASTConsumer() 
+  // -> Callback::run()
   return Tool.run(new ActionFactory(std::move(targets)));
 }
 
