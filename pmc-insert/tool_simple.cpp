@@ -77,6 +77,8 @@ public:
     const auto* CE = Res.Nodes.getNodeAs<CallExpr>("call"); // Get the CallExpr node
     if (!CE) return;
 
+    // CE->dump();
+
     const SourceManager& SM = *Res.SourceManager; // this contains the source code of the file
     
     const FunctionDecl* FD = CE->getDirectCallee();
@@ -118,51 +120,44 @@ public:
     // Try different patterns based on parent context
     
     // Walk up parent chain to find context
-    const Expr* Current = CE;
+    // Start from the CallExpr and walk up the AST
     const BinaryOperator* FoundAssign = nullptr;
     const VarDecl* FoundVarDecl = nullptr;
     
-    // Walk up through implicit casts and find BinaryOperator or VarDecl
-    for (int depth = 0; depth < 10; depth++) {  // Limit depth to avoid infinite loops
-      auto Parents = Ctx.getParents(*Current);
-      if (Parents.empty()) break;
-      
-      // Check for assignment
+    // Walk up through parents to find BinaryOperator or VarDecl
+    auto Parents = Ctx.getParents(*CE);
+    for (int depth = 0; depth < 10 && !Parents.empty(); depth++) {
+      // Check for assignment (more complex, check first)
       if (const BinaryOperator* BO = Parents[0].get<BinaryOperator>()) {
         if (BO->getOpcode() == BO_Assign) {
           FoundAssign = BO;
           break;
         }
       }
-      
+
       // Check for variable declaration
       if (const VarDecl* VD = Parents[0].get<VarDecl>()) {
-        if (VD->hasInit()) {
-          FoundVarDecl = VD;
-          break;
-        }
-      }
-      
-      // Move up to next parent (through implicit casts, etc.)
-      if (const Expr* E = Parents[0].get<Expr>()) {
-        Current = E;
-      } else {
+        FoundVarDecl = VD;
         break;
       }
+      
+      // Move up to next parent
+      Parents = Ctx.getParents(Parents[0]);
     }
     
     // 2) Handle assignment statement: `x = foo();`
     // Strategy: Insert "begin" before assignment, insert "end" after semicolon
     if (FoundAssign) {
       // Use the assignment's own location (don't walk up to avoid finding CompoundStmt)
-      SourceLocation assignStart = FoundAssign->getLocStart();
-      SourceLocation assignEnd = FoundAssign->getLocEnd();
+      SourceLocation assignStart = FoundAssign->getLocStart(); // points to x
+      SourceLocation assignEnd = FoundAssign->getLocEnd(); // points to the end of foo(), which is )
       
       // Insert "begin" at start of assignment
       R.InsertTextBefore(assignStart, begin);
       
+      // we cannot directly insert assignafter becuase that would place the code inbetween foo() and ;
       // Find semicolon after the assignment and insert "end" after it
-      SourceLocation afterToken = Lexer::getLocForEndOfToken(assignEnd, 0, SM, LO);
+      SourceLocation afterToken = Lexer::getLocForEndOfToken(assignEnd, 0, SM, LO); // points after )
       
       // Scan forward for semicolon (usually very close, within 10 chars)
       for (unsigned offset = 0; offset < 20; offset++) {
@@ -190,25 +185,37 @@ public:
       auto ParentsVD = Ctx.getParents(*FoundVarDecl);
       for (auto& P : ParentsVD) {
         if (const DeclStmt* DS = P.get<DeclStmt>()) {
-          if (DS->isSingleDecl()) {
-            // Find semicolon after the declaration statement
-            SourceLocation DSEnd = DS->getLocEnd();
-            SourceLocation afterSemi = Lexer::findLocationAfterToken(
-                DSEnd, tok::semi, SM, LO, false);
+          // Find semicolon after the declaration statement
+          SourceLocation DSStart = DS->getLocStart();
+          SourceLocation DSEnd = DS->getLocEnd();
+          
+          SourceLocation afterSemi;
+          
+          // Scan forward from DSEnd itself (might already be at/near the semicolon)
+          for (int offset = -5; offset < 30; offset++) {
+            SourceLocation testLoc = DSEnd.getLocWithOffset(offset);
+            if (testLoc.isInvalid()) continue;
             
-            if (afterSemi.isValid()) {
-              SourceRange RR(DS->getLocStart(), afterSemi);
-              std::string T = FoundVarDecl->getType().getAsString(Ctx.getPrintingPolicy());
-              std::string name = FoundVarDecl->getName().str();
-              std::string tmp = S.genTemp();
-              std::string repl = "{ " + begin + T + " " + tmp + " = (" + callText + "); "
-                                 + end + T + " " + name + " = " + tmp + "; }";
-              R.ReplaceText(RR, repl);
-              return;
+            const char* charData = SM.getCharacterData(testLoc);
+            if (*charData == ';') {
+              afterSemi = testLoc.getLocWithOffset(1);
+              break;
             }
           }
+          if (afterSemi.isValid() && DSStart.isValid()) {
+            SourceRange RR(DSStart, afterSemi);
+            std::string T = FoundVarDecl->getType().getAsString(Ctx.getPrintingPolicy());
+            std::string name = FoundVarDecl->getName().str();
+            std::string repl = "{ " + begin + T + " " + name + " = (" + callText + "); " + end + "}";
+            R.ReplaceText(RR, repl);
+            return;
+          }
+          // Don't fall through to case 1 if we're in a VarDecl
+          return;
         }
       }
+      // Found VarDecl but no DeclStmt - unusual but prevent fallthrough
+      return;
     }
 
     // 1) Expression statement: `foo();` (fallback for simple calls)
@@ -218,7 +225,7 @@ public:
     
     if (afterSemi.isValid()) {
       SourceRange range(CE->getLocStart(), afterSemi);
-      std::string repl = "{ " + begin + callText + "; " + end + "}";
+      std::string repl = begin + callText + "; " + end;
       R.ReplaceText(range, repl);
       return;
     }
