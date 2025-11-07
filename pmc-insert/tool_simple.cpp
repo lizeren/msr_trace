@@ -13,6 +13,7 @@
 #include "llvm/Support/CommandLine.h"
 #include <unordered_set>
 #include <string>
+#include <memory>
 
 using namespace clang;
 using namespace clang::tooling;
@@ -60,9 +61,9 @@ static std::string getText(const SourceManager& SM, const LangOptions& LO, Sourc
 
 static SourceRange rangeWithTrailingSemi(const Stmt* S, const ASTContext& Ctx) {
   const SourceManager& SM = Ctx.getSourceManager();
-  SourceLocation begin = S->getLocStart();
+  SourceLocation begin = S->getBeginLoc();
   SourceLocation afterSemi = Lexer::findLocationAfterToken(
-      S->getLocEnd(), tok::semi, SM, Ctx.getLangOpts(), true);
+      S->getEndLoc(), tok::semi, SM, Ctx.getLangOpts(), true);
   if (afterSemi.isInvalid()) return SourceRange();
   return SourceRange(begin, afterSemi);
 }
@@ -114,7 +115,9 @@ public:
     // Helpers - use unique variable names to avoid redefinition
     auto callText = getText(SM, LO, CE->getSourceRange());
     std::string hvar = S.genTemp(("__pmc_h_" + fname).c_str());
-    std::string begin = "void* " + hvar + " = pmc_measure_begin_csv(__func__, NULL); ";
+    unsigned counterNum = S.TempCounter; // Get the current counter for this call
+    std::string callLabel = fname + "_" + std::to_string(counterNum);
+    std::string begin = "pmc_multi_handle_t* " + hvar + " = pmc_measure_begin_csv(\"" + callLabel + "\", NULL); ";
     std::string end   = "pmc_measure_end(" + hvar + ", 1); ";
 
     // Try different patterns based on parent context
@@ -123,11 +126,22 @@ public:
     // Start from the CallExpr and walk up the AST
     const BinaryOperator* FoundAssign = nullptr;
     const VarDecl* FoundVarDecl = nullptr;
+    const ReturnStmt* FoundReturn = nullptr;
     
-    // Walk up through parents to find BinaryOperator or VarDecl
+    // Walk up through parents to find BinaryOperator, VarDecl, or ReturnStmt
     auto Parents = Ctx.getParents(*CE);
     for (int depth = 0; depth < 10 && !Parents.empty(); depth++) {
-      // Check for assignment (more complex, check first)
+      
+      // We start checking the most complicated case first
+
+      // Check for variable declaration
+      if (const VarDecl* VD = Parents[0].get<VarDecl>()) {
+        FoundVarDecl = VD;
+        break;
+      }
+
+
+      // Check for assignment  
       if (const BinaryOperator* BO = Parents[0].get<BinaryOperator>()) {
         if (BO->getOpcode() == BO_Assign) {
           FoundAssign = BO;
@@ -135,11 +149,12 @@ public:
         }
       }
 
-      // Check for variable declaration
-      if (const VarDecl* VD = Parents[0].get<VarDecl>()) {
-        FoundVarDecl = VD;
+      // Check for return statement
+      if (const ReturnStmt* RS = Parents[0].get<ReturnStmt>()) {
+        FoundReturn = RS;
         break;
       }
+      
       
       // Move up to next parent
       Parents = Ctx.getParents(Parents[0]);
@@ -149,8 +164,16 @@ public:
     // Strategy: Insert "begin" before assignment, insert "end" after semicolon
     if (FoundAssign) {
       // Use the assignment's own location (don't walk up to avoid finding CompoundStmt)
-      SourceLocation assignStart = FoundAssign->getLocStart(); // points to x
-      SourceLocation assignEnd = FoundAssign->getLocEnd(); // points to the end of foo(), which is )
+
+      /*
+      x = foo()
+      ^       ^
+      |       |
+      |       assignEnd (points to START of last token ')')
+      assignStart (points to 'x')
+      */
+      SourceLocation assignStart = FoundAssign->getBeginLoc(); 
+      SourceLocation assignEnd = FoundAssign->getEndLoc(); // points to START of last token ')' of the expression
       
       // Insert "begin" at start of assignment
       R.InsertTextBefore(assignStart, begin);
@@ -182,12 +205,14 @@ public:
     
     // 3) Handle declaration with initializer: `T x = foo();`
     if (FoundVarDecl) {
+      // the parent of the VarDecl is the DeclStmt
       auto ParentsVD = Ctx.getParents(*FoundVarDecl);
+      // usually there is only one parent, but a node might have multiple "logical" parents. so...
       for (auto& P : ParentsVD) {
         if (const DeclStmt* DS = P.get<DeclStmt>()) {
           // Find semicolon after the declaration statement
-          SourceLocation DSStart = DS->getLocStart();
-          SourceLocation DSEnd = DS->getLocEnd();
+          SourceLocation DSStart = DS->getBeginLoc();
+          SourceLocation DSEnd = DS->getEndLoc();
           
           SourceLocation afterSemi;
           
@@ -204,9 +229,9 @@ public:
           }
           if (afterSemi.isValid() && DSStart.isValid()) {
             SourceRange RR(DSStart, afterSemi);
-            std::string T = FoundVarDecl->getType().getAsString(Ctx.getPrintingPolicy());
-            std::string name = FoundVarDecl->getName().str();
-            std::string repl = "{ " + begin + T + " " + name + " = (" + callText + "); " + end + "}";
+            std::string T = FoundVarDecl->getType().getAsString(Ctx.getPrintingPolicy()); // variable type
+            std::string name = FoundVarDecl->getName().str(); // variable name
+            std::string repl = begin + T + " " + name + " = (" + callText + "); " + end ;
             R.ReplaceText(RR, repl);
             return;
           }
@@ -218,13 +243,55 @@ public:
       return;
     }
 
+    // 4) Handle return statement: `return foo();`
+    if (FoundReturn) {
+      // Find semicolon after the return statement
+      SourceLocation RSStart = FoundReturn->getBeginLoc();
+      SourceLocation RSEnd = FoundReturn->getEndLoc();
+      
+      SourceLocation afterSemi;
+      
+      // Scan forward from RSEnd to find the semicolon
+      for (int offset = -5; offset < 30; offset++) {
+        SourceLocation testLoc = RSEnd.getLocWithOffset(offset);
+        if (testLoc.isInvalid()) continue;
+        
+        const char* charData = SM.getCharacterData(testLoc);
+        if (*charData == ';') {
+          afterSemi = testLoc.getLocWithOffset(1);
+          break;
+        }
+      }
+      
+      if (afterSemi.isValid() && RSStart.isValid()) {
+        SourceRange RR(RSStart, afterSemi);
+        
+        // Get the return type from the function we're in
+        // We need to create a temporary to store the result
+        std::string tmp = S.genTemp();
+        
+        // For now, use 'auto' for the return type (C++11)
+        // In C, we'd need to infer the type from the CallExpr
+        QualType RetType = CE->getType();
+        std::string T = RetType.getAsString(Ctx.getPrintingPolicy());
+        
+        std::string repl =  begin + T + " " + tmp + " = (" + callText + "); " 
+                           + end + "return " + tmp + ";";
+        R.ReplaceText(RR, repl);
+        return;
+      }
+      
+      // Don't fall through if we're in a return statement
+      return;
+    }
+
     // 1) Expression statement: `foo();` (fallback for simple calls)
     // Find the semicolon after the call
     SourceLocation afterSemi = Lexer::findLocationAfterToken(
-        CE->getLocEnd(), tok::semi, SM, LO, false);
+        CE->getEndLoc(), tok::semi, SM, LO, false);
     
     if (afterSemi.isValid()) {
-      SourceRange range(CE->getLocStart(), afterSemi);
+      SourceRange range(CE->getBeginLoc(), afterSemi);
       std::string repl = begin + callText + "; " + end;
       R.ReplaceText(range, repl);
       return;
@@ -260,8 +327,8 @@ class ActionFactory : public FrontendActionFactory {
 public:
   ActionFactory(std::unordered_set<std::string> Targets) : Targets(std::move(Targets)) {}
   
-  clang::FrontendAction* create() override {
-    return new Action(Targets);
+  std::unique_ptr<clang::FrontendAction> create() override {
+    return std::make_unique<Action>(Targets);
   }
   
 private:
@@ -286,6 +353,7 @@ int main(int argc, const char** argv) {
   // ActionFactory::create() returns new Action(Targets)
   // -> Action::CreateASTConsumer() 
   // -> Callback::run()
-  return Tool.run(new ActionFactory(std::move(targets)));
+  auto factory = std::make_unique<ActionFactory>(std::move(targets));
+  return Tool.run(factory.get());
 }
 
