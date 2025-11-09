@@ -14,21 +14,60 @@
 #include <unordered_set>
 #include <string>
 #include <memory>
+#include <fstream>
+#include <sstream>
+#include <vector>
 
 using namespace clang;
 using namespace clang::tooling;
 using namespace clang::ast_matchers;
 
-//  OptionCategory lets us hide all the default clang options displayed in the help, we don’t want those for our tool.
+//  OptionCategory lets us hide all the default clang options displayed in the help, we don't want those for our tool.
 static llvm::cl::OptionCategory Cat("pmc-insert options");
 
-static llvm::cl::list<std::string> WrapNames(
-  "wrap", llvm::cl::desc("Function name to wrap (repeatable): --wrap=foo"),
-  llvm::cl::OneOrMore, llvm::cl::cat(Cat));
+static llvm::cl::opt<std::string> ApiListCSV(
+  "api-list", llvm::cl::desc("CSV file containing function names to wrap (one per line)"),
+  llvm::cl::Required, llvm::cl::cat(Cat));
 
 static llvm::cl::opt<std::string> IncludeHeader(
   "include-header", llvm::cl::desc("Header to insert once per file (optional)"),
   llvm::cl::init(""), llvm::cl::cat(Cat));
+
+// Function to read target function names from CSV file
+static std::unordered_set<std::string> readApiListFromCSV(const std::string& filepath) {
+  std::unordered_set<std::string> targets;
+  std::ifstream file(filepath);
+  
+  if (!file.is_open()) {
+    llvm::errs() << "Error: Cannot open CSV file: " << filepath << "\n";
+    return targets;
+  }
+  
+  std::string line;
+  while (std::getline(file, line)) {
+    // Trim whitespace and commas
+    size_t start = line.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) continue; // Skip empty lines
+    
+    size_t end = line.find_first_of(",\r\n", start);
+    if (end == std::string::npos) end = line.length();
+    
+    std::string funcName = line.substr(start, end - start);
+    
+    // Trim trailing whitespace
+    size_t lastNonSpace = funcName.find_last_not_of(" \t\r\n");
+    if (lastNonSpace != std::string::npos) {
+      funcName = funcName.substr(0, lastNonSpace + 1);
+    }
+    
+    if (!funcName.empty()) {
+      targets.insert(funcName);
+    }
+  }
+  
+  file.close();
+  return targets;
+}
 
 namespace {
 
@@ -340,8 +379,18 @@ private:
 int main(int argc, const char** argv) {
   CommonOptionsParser OP(argc, argv, Cat);
 
-  std::unordered_set<std::string> targets;
-  for (auto& w : WrapNames) targets.insert(w); // name of the target functions we want to wrap
+  // Read target function names from CSV file
+  std::unordered_set<std::string> targets = readApiListFromCSV(ApiListCSV);
+  
+  if (targets.empty()) {
+    llvm::errs() << "Error: No target functions found in CSV file: " << ApiListCSV << "\n";
+    return 1;
+  }
+  
+  llvm::outs() << "Loaded " << targets.size() << " target functions from " << ApiListCSV << ":\n";
+  for (const auto& func : targets) {
+    llvm::outs() << "  - " << func << "\n";
+  }
 
   // OP.getCompilations() - Returns a CompilationDatabase object that contains compilation information 
   // (compiler flags, include paths, defines, etc.) for each source file
