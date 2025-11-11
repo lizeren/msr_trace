@@ -56,6 +56,11 @@ gcc -O2 -Wall -o near_call_counter_sample near_call_counter_sample.c -ldl
 ./near_call_counter_sample 1000 sample 10
 ```
 
+## load_store_count
+```bash
+gcc -O2 -o load_store_count load_store_count.c
+  ./load_store_count 10000000
+```
 
 
 ## Core Voltage
