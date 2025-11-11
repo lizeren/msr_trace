@@ -78,19 +78,8 @@ int main(int argc, char **argv) {
     (void)result;
     
     // Stop measurement and get automatic batch report
-    pmc_measure_end(pmc, 1);  // 1 = auto-report results
+    pmc_measure_end(pmc, 1);  // 1 = auto-report results and export to JSON
     
-    printf("=== Done ===\n");
-    printf("\nThis example shows the NEW CSV-based API:\n");
-    printf("  - Configure events in pmc_events.csv (no code changes needed!)\n");
-    printf("  - Call pmc_measure_begin_csv() at function entry\n");
-    printf("  - Call pmc_measure_end() at function exit\n");
-    printf("  - Automatic batch report with all results!\n\n");
-    
-    printf("Perfect for LLVM auto-injection:\n");
-    printf("  void* h = pmc_measure_begin_csv(__func__, NULL);\n");
-    printf("  // ... function body ...\n");
-    printf("  pmc_measure_end(h, 1);\n");
     
     return 0;
 }

@@ -26,17 +26,6 @@ extern "C" {
 // Forward declarations
 typedef struct pmc_ctx pmc_ctx_t;
 
-// ===== Event Types =====
-typedef enum {
-    PMC_EVENT_NEAR_CALL,           // BR_INST_RETIRED.NEAR_CALL
-    PMC_EVENT_CONDITIONAL_BRANCH,  // BR_INST_RETIRED.CONDITIONAL
-    PMC_EVENT_BRANCH_MISPREDICT,   // BR_MISP_RETIRED.ALL_BRANCHES
-    PMC_EVENT_L1_DCACHE_MISS,      // MEM_LOAD_RETIRED.L1_MISS
-    PMC_EVENT_L1_DCACHE_HIT,       // MEM_LOAD_RETIRED.L1_HIT
-    PMC_EVENT_CYCLES,              // CPU_CLK_UNHALTED.THREAD
-    PMC_EVENT_INSTRUCTIONS,        // INST_RETIRED.ANY
-} pmc_event_type_t;
-
 // ===== Mode Types =====
 typedef enum {
     PMC_MODE_COUNTING,   // Just count events
@@ -45,7 +34,7 @@ typedef enum {
 
 // ===== Configuration =====
 typedef struct {
-    pmc_event_type_t event;        // Event to monitor
+    const char *event;             // Event name (e.g., "BR_INST_RETIRED.NEAR_CALL", "CPU_CLK_UNHALTED.THREAD")
     pmc_mode_t mode;               // Counting or sampling
     uint64_t sample_period;        // For sampling: sample every N events (ignored in counting mode)
     int exclude_kernel;            // Exclude kernel events (1=yes, 0=no)
@@ -65,7 +54,7 @@ typedef struct {
 
 // ===== Multi-Event Request =====
 typedef struct {
-    pmc_event_type_t event;    // Event to measure
+    const char *event;         // Event name (e.g., "BR_INST_RETIRED.NEAR_CALL")
     pmc_mode_t mode;           // Counting or sampling
     uint64_t sample_period;    // For sampling mode (ignored in counting)
     int precise_ip;            // PEBS precision (0-3), 0 recommended for compatibility
@@ -94,8 +83,9 @@ pmc_multi_handle_t* pmc_measure_begin(const char *label,
  * 
  * CSV format (with header):
  *   event_name,mode,sample_period
- *   PMC_EVENT_NEAR_CALL,counting,0
- *   PMC_EVENT_L1_DCACHE_HIT,sampling,1000
+ *   BR_INST_RETIRED.NEAR_CALL,counting,0
+ *   MEM_LOAD_RETIRED.L1_HIT,sampling,1000
+ *   CPU_CLK_UNHALTED.THREAD,counting,0
  * 
  * @param label Identifier for this measurement (e.g., function name)
  * @param csv_path Path to CSV file (NULL or empty for default "pmc_events.csv")
@@ -120,37 +110,47 @@ void pmc_measure_end(pmc_multi_handle_t *handle, int report);
 void pmc_report_all(pmc_multi_handle_t *handle);
 
 /**
+ * Export measurement results to JSON file.
+ * 
+ * @param handle Handle from pmc_measure_begin
+ * @param json_path Path to output JSON file
+ * @return 0 on success, -1 on failure
+ */
+int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path);
+
+/**
  * Get specific event count.
  * 
  * @param handle Handle from pmc_measure_begin
- * @param event Event type to query
+ * @param event_name Event name to query (e.g., "BR_INST_RETIRED.NEAR_CALL")
  * @param count Output: event count
  * @return 0 on success, -1 on failure
  */
-int pmc_get_count(pmc_multi_handle_t *handle, pmc_event_type_t event, uint64_t *count);
+int pmc_get_count(pmc_multi_handle_t *handle, const char *event_name, uint64_t *count);
 
 /**
  * Get specific event samples.
  * 
  * @param handle Handle from pmc_measure_begin
- * @param event Event type to query
+ * @param event_name Event name to query (e.g., "MEM_LOAD_RETIRED.L1_MISS")
  * @param samples Output: pointer to array of samples (caller must free())
  * @param num_samples Output: number of samples collected
  * @return 0 on success, -1 on failure
  */
-int pmc_get_samples(pmc_multi_handle_t *handle, pmc_event_type_t event,
+int pmc_get_samples(pmc_multi_handle_t *handle, const char *event_name,
                     pmc_sample_t **samples, size_t *num_samples);
 
 // ===== Original API (kept for backwards compatibility) =====
 
 /**
- * Get default configuration for an event type.
+ * Get default configuration for an event.
  * 
- * @param event Event type to configure
+ * @param event_name Event name (e.g., "BR_INST_RETIRED.NEAR_CALL")
  * @param mode Counting or sampling mode
+ * @param sample_period Sample period for sampling mode
  * @return Default configuration structure
  */
-pmc_config_t pmc_get_default_config(pmc_event_type_t event, pmc_mode_t mode, uint64_t sample_period);
+pmc_config_t pmc_get_default_config(const char *event_name, pmc_mode_t mode, uint64_t sample_period);
 
 /**
  * Create a PMC context with the given configuration.
@@ -206,14 +206,6 @@ int pmc_read_samples(pmc_ctx_t *ctx, pmc_sample_t **samples,
  * @param index Sample index for display
  */
 void pmc_print_sample(const pmc_sample_t *sample, int index);
-
-/**
- * Get a human-readable name for an event type.
- * 
- * @param event Event type
- * @return Event name string
- */
-const char* pmc_event_name(pmc_event_type_t event);
 
 /**
  * Destroy a PMC context and free all resources.
