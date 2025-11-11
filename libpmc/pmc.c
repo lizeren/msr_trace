@@ -83,11 +83,38 @@ typedef struct {
 // IMPORTANT: CPU_CLK_UNHALTED.THREAD and INST_RETIRED.ANY can be deployed on fixed counters. 
 // We can always measure them plus another four programmable events.
 static const event_config_entry_t event_table[] = {
-    { "BR_INST_RETIRED.NEAR_CALL",      0xC4, 0x02, 1 },
-    { "BR_INST_RETIRED.CONDITIONAL",    0xC4, 0x01, 1 },
     { "BR_MISP_RETIRED.ALL_BRANCHES",   0xC5, 0x00, 1 },
+    { "BR_MISP_RETIRED.CONDITIONAL",    0xC5, 0x01, 1 },
+    { "BR_MISP_RETIRED.NEAR_CALL",      0xC5, 0x02, 1 },
+    { "BR_MISP_RETIRED.NEAR_TAKEN",     0xC5, 0x20, 1 },
+
+    
+    { "BR_INST_RETIRED.ALL_BRANCHES",   0xC4, 0x00, 1 },
+    { "BR_INST_RETIRED.COND_NTAKEN",    0xC4, 0x10, 1 },
+    { "BR_INST_RETIRED.CONDITIONAL",    0xC4, 0x01, 1 },
+    { "BR_INST_RETIRED.FAR_BRANCH",     0xC4, 0x40, 1 },
+    { "BR_INST_RETIRED.NEAR_CALL",      0xC4, 0x02, 1 },
+    { "BR_INST_RETIRED.NEAR_RETURN",    0xC4, 0x08, 1 },
+    { "BR_INST_RETIRED.NEAR_TAKEN",     0xC4, 0x20, 1 },
+    { "BR_INST_RETIRED.NOT_TAKEN",      0xC4, 0x10, 1 },
+
+    { "BR_MISP_EXEC.ALL_BRANCHES",      0x89, 0xFF, 1 },
+    { "BR_MISP_EXEC.INDIRECT",           0x89, 0xE4, 1 },
+
+
+    { "MEM_LOAD_RETIRED.FB_HIT",       0xD1, 0x40, 1 },
     { "MEM_LOAD_RETIRED.L1_MISS",       0xD1, 0x08, 1 },
     { "MEM_LOAD_RETIRED.L1_HIT",        0xD1, 0x01, 1 },
+    { "MEM_LOAD_RETIRED.L2_HIT",        0xD1, 0x02, 1 },
+    { "MEM_LOAD_RETIRED.L2_MISS",        0xD1, 0x10, 1 },
+    { "MEM_LOAD_RETIRED.L3_HIT",        0xD1, 0x04, 1 },
+    { "MEM_LOAD_RETIRED.L3_MISS",        0xD1, 0x20, 1 },
+
+    { "MEM_INST_RETIRED.ALL_LOADS",        0xD0, 0x81, 1 },
+    { "MEM_INST_RETIRED.ALL_STORES",        0xD0, 0x82, 1 },
+    { "MEM_INST_RETIRED.ANY",        0xD0, 0x83, 1 },
+
+
     // Fixed counters (architectural, don't consume programmable counters)
     { "CPU_CLK_UNHALTED.THREAD",        PERF_COUNT_HW_CPU_CYCLES,       0, 0 },
     { "INST_RETIRED.ANY",               PERF_COUNT_HW_INSTRUCTIONS,     0, 0 },
