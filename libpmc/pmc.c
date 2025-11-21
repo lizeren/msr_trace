@@ -56,6 +56,7 @@ struct ring {
 };
 
 // ===== PMC Context =====
+// Read results from perf_event_open()
 struct pmc_ctx {
     pmc_config_t config;
     int fd;
@@ -83,12 +84,13 @@ typedef struct {
 // IMPORTANT: CPU_CLK_UNHALTED.THREAD and INST_RETIRED.ANY can be deployed on fixed counters. 
 // We can always measure them plus another four programmable events.
 static const event_config_entry_t event_table[] = {
+    // Branch misprediction events
     { "BR_MISP_RETIRED.ALL_BRANCHES",   0xC5, 0x00, 1 },
     { "BR_MISP_RETIRED.CONDITIONAL",    0xC5, 0x01, 1 },
     { "BR_MISP_RETIRED.NEAR_CALL",      0xC5, 0x02, 1 },
     { "BR_MISP_RETIRED.NEAR_TAKEN",     0xC5, 0x20, 1 },
 
-    
+    // Branch retirement events
     { "BR_INST_RETIRED.ALL_BRANCHES",   0xC4, 0x00, 1 },
     { "BR_INST_RETIRED.COND_NTAKEN",    0xC4, 0x10, 1 },
     { "BR_INST_RETIRED.CONDITIONAL",    0xC4, 0x01, 1 },
@@ -98,10 +100,11 @@ static const event_config_entry_t event_table[] = {
     { "BR_INST_RETIRED.NEAR_TAKEN",     0xC4, 0x20, 1 },
     { "BR_INST_RETIRED.NOT_TAKEN",      0xC4, 0x10, 1 },
 
+    // Branch speculative execution events
     { "BR_MISP_EXEC.ALL_BRANCHES",      0x89, 0xFF, 1 },
     { "BR_MISP_EXEC.INDIRECT",           0x89, 0xE4, 1 },
 
-
+    // Cache events
     { "MEM_LOAD_RETIRED.FB_HIT",       0xD1, 0x40, 1 },
     { "MEM_LOAD_RETIRED.L1_MISS",       0xD1, 0x08, 1 },
     { "MEM_LOAD_RETIRED.L1_HIT",        0xD1, 0x01, 1 },
@@ -110,6 +113,7 @@ static const event_config_entry_t event_table[] = {
     { "MEM_LOAD_RETIRED.L3_HIT",        0xD1, 0x04, 1 },
     { "MEM_LOAD_RETIRED.L3_MISS",        0xD1, 0x20, 1 },
 
+    // load/store retirement events
     { "MEM_INST_RETIRED.ALL_LOADS",        0xD0, 0x81, 1 },
     { "MEM_INST_RETIRED.ALL_STORES",        0xD0, 0x82, 1 },
     { "MEM_INST_RETIRED.ANY",        0xD0, 0x83, 1 },
@@ -251,8 +255,15 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
 
     // Configure sampling if needed
     if (config->mode == PMC_MODE_SAMPLING) {
+        // Event-based sampling: sample every N events
         attr.sample_period = config->sample_period;
-        attr.freq = 0; // sample only based on event count, not frequency
+        attr.freq = 0;
+        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME;
+        attr.wakeup_events = 1;
+    } else if (config->mode == PMC_MODE_SAMPLING_FREQ) {
+        // Frequency-based sampling: sample at N Hz
+        attr.sample_freq = config->sample_period;  // Reuse field for frequency (Hz)
+        attr.freq = 1;  // Enable frequency mode
         attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME;
         attr.wakeup_events = 1;
     }
@@ -267,8 +278,8 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
         return NULL;
     }
 
-    // Setup ring buffer for sampling
-    if (config->mode == PMC_MODE_SAMPLING) {
+    // Setup ring buffer for sampling modes
+    if (config->mode == PMC_MODE_SAMPLING || config->mode == PMC_MODE_SAMPLING_FREQ) {
         if (ring_mmap(ctx->fd, &ctx->ring, config->ring_buffer_pages) == -1) {
             pmc_set_error("Failed to mmap ring buffer: %s", strerror(errno));
             close(ctx->fd);
@@ -336,7 +347,7 @@ int pmc_read_samples(pmc_ctx_t *ctx, pmc_sample_t **samples,
         return -1;
     }
 
-    if (ctx->config.mode != PMC_MODE_SAMPLING) {
+    if (ctx->config.mode != PMC_MODE_SAMPLING && ctx->config.mode != PMC_MODE_SAMPLING_FREQ) {
         pmc_set_error("Context not in sampling mode");
         return -1;
     }
@@ -441,7 +452,7 @@ void pmc_print_sample(const pmc_sample_t *sample, int index) {
 void pmc_destroy(pmc_ctx_t *ctx) {
     if (!ctx) return;
 
-    if (ctx->config.mode == PMC_MODE_SAMPLING) {
+    if (ctx->config.mode == PMC_MODE_SAMPLING || ctx->config.mode == PMC_MODE_SAMPLING_FREQ) {
         ring_unmap(&ctx->ring);
     }
 
@@ -465,6 +476,8 @@ static int parse_mode(const char *mode, pmc_mode_t *out_mode) {
         *out_mode = PMC_MODE_COUNTING;
     } else if (strcmp(mode, "sampling") == 0 || strcmp(mode, "SAMPLING") == 0) {
         *out_mode = PMC_MODE_SAMPLING;
+    } else if (strcmp(mode, "sampling_freq") == 0 || strcmp(mode, "SAMPLING_FREQ") == 0) {
+        *out_mode = PMC_MODE_SAMPLING_FREQ;
     } else {
         return -1;
     }
@@ -494,6 +507,16 @@ static void trim_whitespace(char *str) {
     }
 }
 
+// Helper: Check if index is in the selection list
+static int is_index_selected(int event_index, const int *selected_indices, size_t num_selected) {
+    for (size_t i = 0; i < num_selected; i++) {
+        if (selected_indices[i] == event_index) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // Load events from CSV file
 static int load_events_from_csv(const char *csv_path, 
                                 pmc_event_request_t **events_out,
@@ -504,7 +527,40 @@ static int load_events_from_csv(const char *csv_path,
         return -1;
     }
     
-    // First pass: count events (skip header)
+    // Check for event index (PMC_EVENT_INDICES environment variable)
+    int selected_indices[100];
+    size_t num_selected = 0;
+    const char *indices_env = getenv("PMC_EVENT_INDICES");
+    
+    if (!indices_env || strlen(indices_env) == 0) {
+        pmc_set_error("PMC_EVENT_INDICES not set. Please specify event indices from the CSV file.\n"
+                     "Example: PMC_EVENT_INDICES=\"0,1,2,3\" ./my_program");
+        fclose(fp);
+        return -1;
+    }
+    
+    // Parse comma-separated list: "0,1,2,3"
+    char indices_copy[256];
+    strncpy(indices_copy, indices_env, sizeof(indices_copy) - 1);
+    indices_copy[sizeof(indices_copy) - 1] = '\0';
+    
+    char *token = strtok(indices_copy, ","); // get the first token
+    while (token && num_selected < 100) {
+        trim_whitespace(token); // make sure the string doesn't have any whitespace
+        selected_indices[num_selected++] = atoi(token); // store the token in an integer array
+        token = strtok(NULL, ","); // get the next token
+    }
+    
+    fprintf(stderr, "PMC: Measuring %zu event indices", num_selected);
+    for (size_t i = 0; i < num_selected && i < 10; i++) {
+        fprintf(stderr, "%s%d", i == 0 ? ": " : ",", selected_indices[i]);
+    }
+    if (num_selected > 10) {
+        fprintf(stderr, "...");
+    }
+    fprintf(stderr, "\n");
+    
+    // First pass: count events that match filter (skip header)
     char line[256];
     size_t count = 0;
     int header_skipped = 0;
@@ -516,11 +572,40 @@ static int load_events_from_csv(const char *csv_path,
             header_skipped = 1;
             continue;  // Skip header line
         }
-        count++;
+        
+        // Quick parse to get index and priority
+        char line_copy[256];
+        strncpy(line_copy, line, sizeof(line_copy) - 1);
+        char *idx_token = strtok(line_copy, ",");
+        if (!idx_token) continue;
+        
+        trim_whitespace(idx_token);
+        int event_idx = atoi(idx_token);
+        
+        // Skip to priority column (4th column after index,event,mode,period)
+        strtok(NULL, ",");  // event name
+        strtok(NULL, ",");  // mode
+        strtok(NULL, ",");  // sample_period
+        char *priority_token = strtok(NULL, ",");
+        
+        if (priority_token) {
+            trim_whitespace(priority_token);
+            
+            // Always include fixed priority events
+            if (strcmp(priority_token, "fixed") == 0) {
+                count++;
+                continue;
+            }
+        }
+        
+        // For normal priority events, check if index is in filter
+        if (is_index_selected(event_idx, selected_indices, num_selected)) {
+            count++;
+        }
     }
     
     if (count == 0) {
-        pmc_set_error("No events found in CSV file");
+        pmc_set_error("No events found in CSV file (after filtering)");
         fclose(fp);
         return -1;
     }
@@ -546,17 +631,21 @@ static int load_events_from_csv(const char *csv_path,
             continue;
         }
         
-        // Parse CSV: event_name,mode,sample_period
+        // Parse CSV: index,event_name,mode,sample_period,priority
+        char index_str[32] = {0};
         char event_name_buf[128] = {0};
         char mode_str[32] = {0};
+        char priority_str[32] = {0};
         uint64_t sample_period = 0;
         
-        // Simple CSV parsing (doesn't handle quoted strings, but we don't need it)
-        char *token1 = strtok(line, ",");
-        char *token2 = strtok(NULL, ",");
-        char *token3 = strtok(NULL, ",");
+        // Simple CSV parsing: index,event_name,mode,sample_period,priority
+        char *token1 = strtok(line, ",");  // index
+        char *token2 = strtok(NULL, ",");  // event_name
+        char *token3 = strtok(NULL, ",");  // mode
+        char *token4 = strtok(NULL, ",");  // sample_period
+        char *token5 = strtok(NULL, ",");  // priority
         
-        if (!token1 || !token2 || !token3) {
+        if (!token1 || !token2 || !token3 || !token4) {
             pmc_set_error("Malformed CSV line at event %zu", idx + 1);
             for (size_t j = 0; j < idx; j++) {
                 free((void*)events[j].event);
@@ -566,12 +655,32 @@ static int load_events_from_csv(const char *csv_path,
             return -1;
         }
         
-        strncpy(event_name_buf, token1, sizeof(event_name_buf) - 1);
-        strncpy(mode_str, token2, sizeof(mode_str) - 1);
-        sample_period = strtoull(token3, NULL, 10);
+        strncpy(index_str, token1, sizeof(index_str) - 1);
+        strncpy(event_name_buf, token2, sizeof(event_name_buf) - 1);
+        strncpy(mode_str, token3, sizeof(mode_str) - 1);
+        sample_period = strtoull(token4, NULL, 10);
+        if (token5) {
+            strncpy(priority_str, token5, sizeof(priority_str) - 1);
+        }
         
+        trim_whitespace(index_str);
         trim_whitespace(event_name_buf);
         trim_whitespace(mode_str);
+        trim_whitespace(priority_str);
+        
+        int event_idx = atoi(index_str);
+        
+        // Apply filter: include if fixed priority OR selected index
+        int should_include = 0;
+        if (strlen(priority_str) > 0 && strcmp(priority_str, "fixed") == 0) {
+            should_include = 1;  // Always include fixed counters
+        } else {
+            should_include = is_index_selected(event_idx, selected_indices, num_selected);
+        }
+        
+        if (!should_include) {
+            continue;  // Skip this event
+        }
         
         // Validate event name
         if (validate_event_name(event_name_buf) != 0) {
@@ -745,7 +854,13 @@ void pmc_measure_end(pmc_multi_handle_t *handle, int report) {
     
     // Report if requested
     if (report) {
-        pmc_export_json(handle, "pmc_results.json");  // Export first to capture samples
+        // Check for custom output filename
+        const char *output_file = getenv("PMC_OUTPUT_FILE");
+        if (!output_file) {
+            output_file = "pmc_results.json";
+        }
+        
+        pmc_export_json(handle, output_file);  // Export first to capture samples
         // pmc_report_all(handle);  // Report second (consumes samples from ring buffer)
     }
     
@@ -786,7 +901,7 @@ void pmc_report_all(pmc_multi_handle_t *handle) {
                        (unsigned long long)count);
             }
         } else {
-            // Sampling mode - print summary
+            // Sampling modes - print summary
             pmc_sample_t *samples = NULL;
             size_t num_samples = 0;
             
@@ -796,9 +911,16 @@ void pmc_report_all(pmc_multi_handle_t *handle) {
                 
                 printf("  [%zu] %s:\n", i + 1, event_name);
                 printf("      Total count: %llu\n", (unsigned long long)count);
-                printf("      Samples: %zu (period: %llu)\n", 
-                       num_samples,
-                       (unsigned long long)handle->requests[i].sample_period);
+                
+                if (handle->requests[i].mode == PMC_MODE_SAMPLING) {
+                    printf("      Samples: %zu (period: %llu events)\n", 
+                           num_samples,
+                           (unsigned long long)handle->requests[i].sample_period);
+                } else {
+                    printf("      Samples: %zu (freq: %llu Hz)\n", 
+                           num_samples,
+                           (unsigned long long)handle->requests[i].sample_period);
+                }
                 
                 if (num_samples > 0) {
                     printf("      Events per sample: %.1f\n", 
@@ -852,7 +974,8 @@ int pmc_get_samples(pmc_multi_handle_t *handle, const char *event_name,
     // Find the context for this event
     for (size_t i = 0; i < handle->num_events; i++) {
         if (strcmp(handle->requests[i].event, event_name) == 0) {
-            if (handle->requests[i].mode != PMC_MODE_SAMPLING) {
+            if (handle->requests[i].mode != PMC_MODE_SAMPLING && 
+                handle->requests[i].mode != PMC_MODE_SAMPLING_FREQ) {
                 pmc_set_error("Event is not in sampling mode: %s", event_name);
                 return -1;
             }
@@ -871,6 +994,7 @@ static const char* mode_to_string(pmc_mode_t mode) {
     switch (mode) {
         case PMC_MODE_COUNTING: return "counting";
         case PMC_MODE_SAMPLING: return "sampling";
+        case PMC_MODE_SAMPLING_FREQ: return "sampling_freq";
         default: return "unknown";
     }
 }
@@ -936,11 +1060,19 @@ int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
         pmc_read_count(ctx, &count);
         fprintf(fp, "      \"count\": %llu", (unsigned long long)count);
         
-        // Handle sampling mode
-        if (handle->requests[i].mode == PMC_MODE_SAMPLING) {
+        // Handle sampling modes
+        if (handle->requests[i].mode == PMC_MODE_SAMPLING || 
+            handle->requests[i].mode == PMC_MODE_SAMPLING_FREQ) {
             fprintf(fp, ",\n");
-            fprintf(fp, "      \"sample_period\": %llu,\n", 
-                    (unsigned long long)handle->requests[i].sample_period);
+            
+            // Output appropriate label for period vs frequency
+            if (handle->requests[i].mode == PMC_MODE_SAMPLING) {
+                fprintf(fp, "      \"sample_period\": %llu,\n", 
+                        (unsigned long long)handle->requests[i].sample_period);
+            } else {
+                fprintf(fp, "      \"sample_freq_hz\": %llu,\n", 
+                        (unsigned long long)handle->requests[i].sample_period);
+            }
             
             // Read samples
             pmc_sample_t *samples = NULL;

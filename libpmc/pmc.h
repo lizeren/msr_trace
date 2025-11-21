@@ -28,15 +28,19 @@ typedef struct pmc_ctx pmc_ctx_t;
 
 // ===== Mode Types =====
 typedef enum {
-    PMC_MODE_COUNTING,   // Just count events
-    PMC_MODE_SAMPLING,   // Sample every N events
+    PMC_MODE_COUNTING,        // Just count events (no samples)
+    PMC_MODE_SAMPLING,        // Sample every N event occurrences
+    PMC_MODE_SAMPLING_FREQ,   // Sample at N Hz frequency (time-based)
 } pmc_mode_t;
 
 // ===== Configuration =====
+// For perf_event_open()
 typedef struct {
     const char *event;             // Event name (e.g., "BR_INST_RETIRED.NEAR_CALL", "CPU_CLK_UNHALTED.THREAD")
-    pmc_mode_t mode;               // Counting or sampling
-    uint64_t sample_period;        // For sampling: sample every N events (ignored in counting mode)
+    pmc_mode_t mode;               // Counting, event-based sampling, or frequency-based sampling
+    uint64_t sample_period;        // For PMC_MODE_SAMPLING: sample every N events
+                                   // For PMC_MODE_SAMPLING_FREQ: sample at N Hz
+                                   // Ignored in PMC_MODE_COUNTING
     int exclude_kernel;            // Exclude kernel events (1=yes, 0=no)
     int exclude_hv;                // Exclude hypervisor events
     int precise_ip;                // PEBS precision level (0-3), 2 recommended for Intel.
@@ -53,10 +57,11 @@ typedef struct {
 } pmc_sample_t;
 
 // ===== Multi-Event Request =====
+// Come from csv file
 typedef struct {
     const char *event;         // Event name (e.g., "BR_INST_RETIRED.NEAR_CALL")
-    pmc_mode_t mode;           // Counting or sampling
-    uint64_t sample_period;    // For sampling mode (ignored in counting)
+    pmc_mode_t mode;           // PMC_MODE_COUNTING, PMC_MODE_SAMPLING, or PMC_MODE_SAMPLING_FREQ
+    uint64_t sample_period;    // For SAMPLING: events per sample; For SAMPLING_FREQ: Hz frequency
     int precise_ip;            // PEBS precision (0-3), 0 recommended for compatibility
 } pmc_event_request_t;
 
@@ -82,10 +87,28 @@ pmc_multi_handle_t* pmc_measure_begin(const char *label,
  * This is the SIMPLIFIED function for LLVM injection - just needs a label!
  * 
  * CSV format (with header):
- *   event_name,mode,sample_period
- *   BR_INST_RETIRED.NEAR_CALL,counting,0
- *   MEM_LOAD_RETIRED.L1_HIT,sampling,1000
- *   CPU_CLK_UNHALTED.THREAD,counting,0
+ *   index,event_name,mode,sample_period,priority
+ *   0,BR_INST_RETIRED.NEAR_CALL,counting,0,normal
+ *   1,MEM_LOAD_RETIRED.L1_HIT,sampling,1000,normal        # Sample every 1000 events
+ *   2,MEM_LOAD_RETIRED.L1_MISS,sampling_freq,4000,normal  # Sample at 4000 Hz (4kHz)
+ *   10,CPU_CLK_UNHALTED.THREAD,counting,0,fixed           # Fixed counter (always included)
+ *   11,INST_RETIRED.ANY,counting,0,fixed                  # Fixed counter (always included)
+ * 
+ * Modes:
+ *   - counting: Just count events (sample_period ignored)
+ *   - sampling: Sample every N event occurrences
+ *   - sampling_freq: Sample at N Hz frequency (time-based)
+ * 
+ * Priority:
+ *   - fixed: Always included regardless of PMC_EVENT_INDICES
+ *   - normal: Included only if index is in PMC_EVENT_INDICES
+ * 
+ * Event Selection (REQUIRED):
+ *   You MUST set PMC_EVENT_INDICES environment variable to select events:
+ *   PMC_EVENT_INDICES="0,1,2,3" ./my_program      # Events 0-3 + all fixed
+ *   PMC_EVENT_INDICES="0,1,2,3,10,11" ./my_program # Same (fixed always included anyway)
+ *   
+ *   If PMC_EVENT_INDICES is not set, measurement will fail with an error.
  * 
  * @param label Identifier for this measurement (e.g., function name)
  * @param csv_path Path to CSV file (NULL or empty for default "pmc_events.csv")
