@@ -11,5 +11,5 @@ make
 ### example_cache_call.c
 
 ```bash
-./example_cache_call 1000 
+PMC_EVENT_INDICES="0,1,2,3" ./example_cache_call 1000 
 ```

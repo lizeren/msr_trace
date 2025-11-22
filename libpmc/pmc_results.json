@@ -1,0 +1,129 @@
+{
+  "label": "workload",
+  "timestamp": "2025-11-22T00:57:48",
+  "num_events": 6,
+  "events": [
+    {
+      "index": 1,
+      "event_name": "BR_MISP_RETIRED.ALL_BRANCHES",
+      "mode": "sampling_freq",
+      "count": 34,
+      "sample_freq_hz": 1000,
+      "num_samples": 4,
+      "samples": [
+        {
+          "ip": "0x7f2c594baea8",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541666699,
+          "count": 3
+        },
+        {
+          "ip": "0xffffffff82400010",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541683348,
+          "count": 5
+        },
+        {
+          "ip": "0x562d17cedba3",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541790632,
+          "count": 14
+        },
+        {
+          "ip": "0x7f2c594bbbe9",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541817237,
+          "count": 22
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "event_name": "BR_MISP_RETIRED.CONDITIONAL",
+      "mode": "sampling_freq",
+      "count": 15,
+      "sample_freq_hz": 1000,
+      "num_samples": 4,
+      "samples": [
+        {
+          "ip": "0x562d17cedb20",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541781393,
+          "count": 2
+        },
+        {
+          "ip": "0x562d17cedc0b",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541808256,
+          "count": 4
+        },
+        {
+          "ip": "0x7f2c596c83fa",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541826268,
+          "count": 6
+        },
+        {
+          "ip": "0x7f2c596c88d1",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541835081,
+          "count": 11
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "event_name": "BR_MISP_RETIRED.NEAR_CALL",
+      "mode": "sampling",
+      "count": 7,
+      "sample_period": 10,
+      "num_samples": 0,
+      "samples": [
+      ]
+    },
+    {
+      "index": 4,
+      "event_name": "BR_MISP_RETIRED.NEAR_TAKEN",
+      "mode": "sampling",
+      "count": 26,
+      "sample_period": 10,
+      "num_samples": 2,
+      "samples": [
+        {
+          "ip": "0x562d17cedba3",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541799532,
+          "count": 10
+        },
+        {
+          "ip": "0x7f2c596c93ab",
+          "pid": 3698,
+          "tid": 3698,
+          "time": 8265541843703,
+          "count": 20
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "event_name": "CPU_CLK_UNHALTED.THREAD",
+      "mode": "counting",
+      "count": 10625
+    },
+    {
+      "index": 6,
+      "event_name": "INST_RETIRED.ANY",
+      "mode": "counting",
+      "count": 1130
+    }
+  ]
+}

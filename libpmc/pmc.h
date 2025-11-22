@@ -46,6 +46,10 @@ typedef struct {
     int precise_ip;                // PEBS precision level (0-3), 2 recommended for Intel.
                                    // 0 = best effort, 1 = requested, 2 = requested + skid constrained, 3 = must be precise
     unsigned int ring_buffer_pages;// Number of data pages for ring buffer (power of 2, default 128)
+    uint32_t event_number;         // Event number (e.g., 0xC4) - from CSV or lookup
+    uint32_t umask;                // Unit mask (e.g., 0x02) - from CSV or lookup
+    int is_raw;                    // 1 for raw events, 0 for fixed counters - from CSV or lookup
+    int pinned;                    // 1 for pinned events, 0 for non-pinned events
 } pmc_config_t;
 
 // ===== Sample Data =====
@@ -54,6 +58,7 @@ typedef struct {
     uint32_t pid;      // Process ID
     uint32_t tid;      // Thread ID
     uint64_t time;     // Timestamp
+    uint64_t count;    // Counter value at this sample point
 } pmc_sample_t;
 
 // ===== Multi-Event Request =====
@@ -63,6 +68,9 @@ typedef struct {
     pmc_mode_t mode;           // PMC_MODE_COUNTING, PMC_MODE_SAMPLING, or PMC_MODE_SAMPLING_FREQ
     uint64_t sample_period;    // For SAMPLING: events per sample; For SAMPLING_FREQ: Hz frequency
     int precise_ip;            // PEBS precision (0-3), 0 recommended for compatibility
+    uint32_t event_number;     // Event number from CSV (e.g., 0xC4)
+    uint32_t umask;            // Unit mask from CSV (e.g., 0x02)
+    int is_raw;                // 1 for raw events, 0 for fixed counters
 } pmc_event_request_t;
 
 // Forward declaration for multi-event handle
@@ -87,26 +95,35 @@ pmc_multi_handle_t* pmc_measure_begin(const char *label,
  * This is the SIMPLIFIED function for LLVM injection - just needs a label!
  * 
  * CSV format (with header):
- *   index,event_name,mode,sample_period,priority
- *   0,BR_INST_RETIRED.NEAR_CALL,counting,0,normal
- *   1,MEM_LOAD_RETIRED.L1_HIT,sampling,1000,normal        # Sample every 1000 events
- *   2,MEM_LOAD_RETIRED.L1_MISS,sampling_freq,4000,normal  # Sample at 4000 Hz (4kHz)
- *   10,CPU_CLK_UNHALTED.THREAD,counting,0,fixed           # Fixed counter (always included)
- *   11,INST_RETIRED.ANY,counting,0,fixed                  # Fixed counter (always included)
+ *   index,event_name,event_number,umask,mode,sample_period,type
+ *   0,BR_INST_RETIRED.NEAR_CALL,0xC4,0x02,counting,0,raw
+ *   1,MEM_LOAD_RETIRED.L1_HIT,0xD1,0x01,sampling,1000,raw        # Sample every 1000 events
+ *   2,MEM_LOAD_RETIRED.L1_MISS,0xD1,0x08,sampling_freq,4000,raw  # Sample at 4000 Hz (4kHz)
+ *   24,CPU_CLK_UNHALTED.THREAD,0x00,0x00,counting,0,fixed        # Fixed counter (always included)
+ *   25,INST_RETIRED.ANY,0x00,0x00,counting,0,fixed               # Fixed counter (always included)
+ * 
+ * Columns:
+ *   - index: Event index for selection
+ *   - event_name: Human-readable event name
+ *   - event_number: Hardware event number (hex, e.g., 0xC4)
+ *   - umask: Unit mask (hex, e.g., 0x02)
+ *   - mode: counting, sampling, or sampling_freq
+ *   - sample_period: For sampling modes (ignored in counting)
+ *   - type: raw (programmable counter) or fixed (fixed counter)
  * 
  * Modes:
  *   - counting: Just count events (sample_period ignored)
  *   - sampling: Sample every N event occurrences
  *   - sampling_freq: Sample at N Hz frequency (time-based)
  * 
- * Priority:
- *   - fixed: Always included regardless of PMC_EVENT_INDICES
- *   - normal: Included only if index is in PMC_EVENT_INDICES
+ * Type:
+ *   - fixed: Always included regardless of PMC_EVENT_INDICES (uses fixed counters)
+ *   - raw: Included only if index is in PMC_EVENT_INDICES (uses programmable counters)
  * 
  * Event Selection (REQUIRED):
  *   You MUST set PMC_EVENT_INDICES environment variable to select events:
  *   PMC_EVENT_INDICES="0,1,2,3" ./my_program      # Events 0-3 + all fixed
- *   PMC_EVENT_INDICES="0,1,2,3,10,11" ./my_program # Same (fixed always included anyway)
+ *   PMC_EVENT_INDICES="0,1,2,3,24,25" ./my_program # Same (fixed always included anyway)
  *   
  *   If PMC_EVENT_INDICES is not set, measurement will fail with an error.
  * 

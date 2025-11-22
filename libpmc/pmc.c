@@ -73,56 +73,6 @@ struct pmc_multi_handle {
     int all_started;
 };
 
-// ===== Event configuration table =====
-typedef struct {
-    const char *name;
-    uint32_t event;
-    uint32_t umask;
-    int is_raw;  // 1 for raw events, 0 for generic (fixed counters)
-} event_config_entry_t;
-
-// IMPORTANT: CPU_CLK_UNHALTED.THREAD and INST_RETIRED.ANY can be deployed on fixed counters. 
-// We can always measure them plus another four programmable events.
-static const event_config_entry_t event_table[] = {
-    // Branch misprediction events
-    { "BR_MISP_RETIRED.ALL_BRANCHES",   0xC5, 0x00, 1 },
-    { "BR_MISP_RETIRED.CONDITIONAL",    0xC5, 0x01, 1 },
-    { "BR_MISP_RETIRED.NEAR_CALL",      0xC5, 0x02, 1 },
-    { "BR_MISP_RETIRED.NEAR_TAKEN",     0xC5, 0x20, 1 },
-
-    // Branch retirement events
-    { "BR_INST_RETIRED.ALL_BRANCHES",   0xC4, 0x00, 1 },
-    { "BR_INST_RETIRED.COND_NTAKEN",    0xC4, 0x10, 1 },
-    { "BR_INST_RETIRED.CONDITIONAL",    0xC4, 0x01, 1 },
-    { "BR_INST_RETIRED.FAR_BRANCH",     0xC4, 0x40, 1 },
-    { "BR_INST_RETIRED.NEAR_CALL",      0xC4, 0x02, 1 },
-    { "BR_INST_RETIRED.NEAR_RETURN",    0xC4, 0x08, 1 },
-    { "BR_INST_RETIRED.NEAR_TAKEN",     0xC4, 0x20, 1 },
-    { "BR_INST_RETIRED.NOT_TAKEN",      0xC4, 0x10, 1 },
-
-    // Branch speculative execution events
-    { "BR_MISP_EXEC.ALL_BRANCHES",      0x89, 0xFF, 1 },
-    { "BR_MISP_EXEC.INDIRECT",           0x89, 0xE4, 1 },
-
-    // Cache events
-    { "MEM_LOAD_RETIRED.FB_HIT",       0xD1, 0x40, 1 },
-    { "MEM_LOAD_RETIRED.L1_MISS",       0xD1, 0x08, 1 },
-    { "MEM_LOAD_RETIRED.L1_HIT",        0xD1, 0x01, 1 },
-    { "MEM_LOAD_RETIRED.L2_HIT",        0xD1, 0x02, 1 },
-    { "MEM_LOAD_RETIRED.L2_MISS",        0xD1, 0x10, 1 },
-    { "MEM_LOAD_RETIRED.L3_HIT",        0xD1, 0x04, 1 },
-    { "MEM_LOAD_RETIRED.L3_MISS",        0xD1, 0x20, 1 },
-
-    // load/store retirement events
-    { "MEM_INST_RETIRED.ALL_LOADS",        0xD0, 0x81, 1 },
-    { "MEM_INST_RETIRED.ALL_STORES",        0xD0, 0x82, 1 },
-    { "MEM_INST_RETIRED.ANY",        0xD0, 0x83, 1 },
-
-
-    // Fixed counters (architectural, don't consume programmable counters)
-    { "CPU_CLK_UNHALTED.THREAD",        PERF_COUNT_HW_CPU_CYCLES,       0, 0 },
-    { "INST_RETIRED.ANY",               PERF_COUNT_HW_INSTRUCTIONS,     0, 0 },
-};
 
 // ===== Helper functions =====
 static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu,
@@ -134,16 +84,6 @@ static inline void rb_barrier(void) {
     __sync_synchronize();
 }
 
-static const event_config_entry_t* get_event_config(const char *event_name) {
-    if (!event_name) return NULL;
-    
-    for (size_t i = 0; i < sizeof(event_table) / sizeof(event_table[0]); i++) {
-        if (strcmp(event_table[i].name, event_name) == 0) {
-            return &event_table[i];
-        }
-    }
-    return NULL;
-}
 
 // ===== Ring buffer operations =====
 static int ring_mmap(int fd, struct ring *r, unsigned data_pages_pow2) {
@@ -199,6 +139,10 @@ pmc_config_t pmc_get_default_config(const char *event_name, pmc_mode_t mode, uin
         .exclude_hv = 1, // exclude hypervisor events
         .precise_ip = 0, // most relaxed precision level
         .ring_buffer_pages = 7,  // 128 pages = 512KB
+        .event_number = 0,  // To be set by caller
+        .umask = 0,  // To be set by caller
+        .is_raw = 0,  // To be set by caller
+        .pinned = 0,  // To be set by caller
     };
     return config;
 }
@@ -206,18 +150,6 @@ pmc_config_t pmc_get_default_config(const char *event_name, pmc_mode_t mode, uin
 pmc_ctx_t* pmc_create(const pmc_config_t *config) {
     if (!config) {
         pmc_set_error("NULL configuration");
-        return NULL;
-    }
-
-    if (!config->event) {
-        pmc_set_error("NULL event name");
-        return NULL;
-    }
-
-    // event_cfg has event number, umask, and if it is raw or not based on the event name provided by the user
-    const event_config_entry_t *event_cfg = get_event_config(config->event);
-    if (!event_cfg) {
-        pmc_set_error("Unknown event name: %s", config->event);
         return NULL;
     }
 
@@ -237,14 +169,22 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
     memset(&attr, 0, sizeof(attr));
     attr.size = sizeof(attr);
     
-    if (event_cfg->is_raw) {
+    if (config->is_raw) {
         // Raw PMU events (programmable counters)
         attr.type = PERF_TYPE_RAW;
-        attr.config = event_cfg->event | ((uint64_t)event_cfg->umask << 8);
+        attr.config = config->event_number | ((uint64_t)config->umask << 8);
     } else {
         // Generic hardware events (uses fixed counters: IA32_FIXED_CTR0/1/2)
         attr.type = PERF_TYPE_HARDWARE;
-        attr.config = event_cfg->event;  // PERF_COUNT_HW_CPU_CYCLES or PERF_COUNT_HW_INSTRUCTIONS
+        if(config->event_number == 0x3C) {
+            attr.config = PERF_COUNT_HW_CPU_CYCLES;
+        } else if(config->event_number == 0xC0) {
+            attr.config = PERF_COUNT_HW_INSTRUCTIONS;
+        } else {
+            pmc_set_error("Unknown event number: %x", config->event_number);
+            free(ctx);
+            return NULL;
+        }
     }
 
     attr.disabled = 1;
@@ -252,19 +192,21 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
     attr.exclude_hv = config->exclude_hv;
     attr.exclude_idle = 1;
     attr.precise_ip = config->precise_ip;
-
+    attr.pinned = 1;
     // Configure sampling if needed
     if (config->mode == PMC_MODE_SAMPLING) {
         // Event-based sampling: sample every N events
         attr.sample_period = config->sample_period;
         attr.freq = 0;
-        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME;
+        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
+        // attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
         attr.wakeup_events = 1;
     } else if (config->mode == PMC_MODE_SAMPLING_FREQ) {
         // Frequency-based sampling: sample at N Hz
         attr.sample_freq = config->sample_period;  // Reuse field for frequency (Hz)
         attr.freq = 1;  // Enable frequency mode
-        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME;
+        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
+        // attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
         attr.wakeup_events = 1;
     }
 
@@ -336,6 +278,22 @@ int pmc_read_count(pmc_ctx_t *ctx, uint64_t *count) {
         pmc_set_error("Failed to read counter: %s", strerror(errno));
         return -1;
     }
+    // When sampling with read_format set, we get: value, time_enabled, time_running
+    // Just read all of it and extract the value (first field)
+    // if (ctx->config.mode == PMC_MODE_SAMPLING || ctx->config.mode == PMC_MODE_SAMPLING_FREQ) {
+    //     uint64_t read_data[3];  // value, time_enabled, time_running
+        
+    //     if (read(ctx->fd, read_data, sizeof(read_data)) != sizeof(read_data)) {
+    //         pmc_set_error("Failed to read counter: %s", strerror(errno));
+    //         return -1;
+    //     }
+    //     *count = read_data[0];  // Extract just the value (first field)
+    // } else {
+    //     if (read(ctx->fd, count, sizeof(*count)) != sizeof(*count)) {
+    //         pmc_set_error("Failed to read counter: %s", strerror(errno));
+    //         return -1;
+    //     }
+    // }
 
     return 0;
 }
@@ -406,13 +364,27 @@ int pmc_read_samples(pmc_ctx_t *ctx, pmc_sample_t **samples,
         if (h.type == PERF_RECORD_SAMPLE) {
             pmc_sample_t *s = &(*samples)[idx];
             
-            if (rem >= sizeof(uint64_t) + 2*sizeof(uint32_t) + sizeof(uint64_t)) {
+            // Expected layout: IP, PID, TID, TIME, READ (value, time_enabled, time_running)
+            // size_t expected_size = sizeof(uint64_t) + 2*sizeof(uint32_t) + sizeof(uint64_t) + 3*sizeof(uint64_t);
+            
+            // Expected layout: IP, PID, TID, TIME, READ (value)
+            size_t expected_size = sizeof(uint64_t) + 2*sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint64_t);
+
+            if (rem >= expected_size) {
                 ring_read_bytes(r, &temp_tail, &s->ip, sizeof(s->ip));
                 ring_read_bytes(r, &temp_tail, &s->pid, sizeof(s->pid));
                 ring_read_bytes(r, &temp_tail, &s->tid, sizeof(s->tid));
                 ring_read_bytes(r, &temp_tail, &s->time, sizeof(s->time));
+                
+                // Read the counter value (PERF_SAMPLE_READ format)
+                uint64_t value, time_enabled, time_running;
+                ring_read_bytes(r, &temp_tail, &value, sizeof(value));
+                // ring_read_bytes(r, &temp_tail, &time_enabled, sizeof(time_enabled));
+                // ring_read_bytes(r, &temp_tail, &time_running, sizeof(time_running));
+                s->count = value;  // Store the counter value at this sample point
+                
                 idx++;
-                rem -= sizeof(uint64_t) + 2*sizeof(uint32_t) + sizeof(uint64_t);
+                rem -= expected_size;
             }
         }
         
@@ -433,9 +405,10 @@ int pmc_read_samples(pmc_ctx_t *ctx, pmc_sample_t **samples,
 void pmc_print_sample(const pmc_sample_t *sample, int index) {
     if (!sample) return;
 
-    printf("SAMPLE #%d  pid=%u tid=%u time=%llu\n", 
+    printf("SAMPLE #%d  pid=%u tid=%u time=%llu count=%llu\n", 
            index, sample->pid, sample->tid, 
-           (unsigned long long)sample->time);
+           (unsigned long long)sample->time,
+           (unsigned long long)sample->count);
 
     // Try to resolve symbol
     Dl_info info;
@@ -464,11 +437,6 @@ void pmc_destroy(pmc_ctx_t *ctx) {
 }
 
 // ===== CSV Parsing Helpers =====
-
-// Validate event name exists in event table
-static int validate_event_name(const char *name) {
-    return get_event_config(name) != NULL ? 0 : -1;
-}
 
 // Parse mode string to enum
 static int parse_mode(const char *mode, pmc_mode_t *out_mode) {
@@ -573,7 +541,7 @@ static int load_events_from_csv(const char *csv_path,
             continue;  // Skip header line
         }
         
-        // Quick parse to get index and priority
+        // Quick parse to get index and type
         char line_copy[256];
         strncpy(line_copy, line, sizeof(line_copy) - 1);
         char *idx_token = strtok(line_copy, ",");
@@ -582,23 +550,25 @@ static int load_events_from_csv(const char *csv_path,
         trim_whitespace(idx_token);
         int event_idx = atoi(idx_token);
         
-        // Skip to priority column (4th column after index,event,mode,period)
+        // Skip to type column (7th column: index,event_name,event_number,umask,mode,sample_period,type)
         strtok(NULL, ",");  // event name
+        strtok(NULL, ",");  // event_number
+        strtok(NULL, ",");  // umask
         strtok(NULL, ",");  // mode
         strtok(NULL, ",");  // sample_period
-        char *priority_token = strtok(NULL, ",");
+        char *type_token = strtok(NULL, ",");
         
-        if (priority_token) {
-            trim_whitespace(priority_token);
+        if (type_token) {
+            trim_whitespace(type_token);
             
-            // Always include fixed priority events
-            if (strcmp(priority_token, "fixed") == 0) {
+            // Always include fixed type events
+            if (strcmp(type_token, "fixed") == 0) {
                 count++;
                 continue;
             }
         }
         
-        // For normal priority events, check if index is in filter
+        // For raw type events, check if index is in filter
         if (is_index_selected(event_idx, selected_indices, num_selected)) {
             count++;
         }
@@ -631,21 +601,25 @@ static int load_events_from_csv(const char *csv_path,
             continue;
         }
         
-        // Parse CSV: index,event_name,mode,sample_period,priority
+        // Parse CSV: index,event_name,event_number,umask,mode,sample_period,type
         char index_str[32] = {0};
         char event_name_buf[128] = {0};
+        char event_number_str[32] = {0};
+        char umask_str[32] = {0};
         char mode_str[32] = {0};
-        char priority_str[32] = {0};
+        char type_str[32] = {0};
         uint64_t sample_period = 0;
         
-        // Simple CSV parsing: index,event_name,mode,sample_period,priority
+        // Simple CSV parsing: index,event_name,event_number,umask,mode,sample_period,type
         char *token1 = strtok(line, ",");  // index
         char *token2 = strtok(NULL, ",");  // event_name
-        char *token3 = strtok(NULL, ",");  // mode
-        char *token4 = strtok(NULL, ",");  // sample_period
-        char *token5 = strtok(NULL, ",");  // priority
+        char *token3 = strtok(NULL, ",");  // event_number
+        char *token4 = strtok(NULL, ",");  // umask
+        char *token5 = strtok(NULL, ",");  // mode
+        char *token6 = strtok(NULL, ",");  // sample_period
+        char *token7 = strtok(NULL, ",");  // type
         
-        if (!token1 || !token2 || !token3 || !token4) {
+        if (!token1 || !token2 || !token3 || !token4 || !token5 || !token6 || !token7) {
             pmc_set_error("Malformed CSV line at event %zu", idx + 1);
             for (size_t j = 0; j < idx; j++) {
                 free((void*)events[j].event);
@@ -657,40 +631,31 @@ static int load_events_from_csv(const char *csv_path,
         
         strncpy(index_str, token1, sizeof(index_str) - 1);
         strncpy(event_name_buf, token2, sizeof(event_name_buf) - 1);
-        strncpy(mode_str, token3, sizeof(mode_str) - 1);
-        sample_period = strtoull(token4, NULL, 10);
-        if (token5) {
-            strncpy(priority_str, token5, sizeof(priority_str) - 1);
-        }
+        strncpy(event_number_str, token3, sizeof(event_number_str) - 1);
+        strncpy(umask_str, token4, sizeof(umask_str) - 1);
+        strncpy(mode_str, token5, sizeof(mode_str) - 1);
+        sample_period = strtoull(token6, NULL, 10);
+        strncpy(type_str, token7, sizeof(type_str) - 1);
         
         trim_whitespace(index_str);
         trim_whitespace(event_name_buf);
+        trim_whitespace(event_number_str);
+        trim_whitespace(umask_str);
         trim_whitespace(mode_str);
-        trim_whitespace(priority_str);
+        trim_whitespace(type_str);
         
         int event_idx = atoi(index_str);
         
-        // Apply filter: include if fixed priority OR selected index
+        // Apply filter: include if fixed type OR selected index
         int should_include = 0;
-        if (strlen(priority_str) > 0 && strcmp(priority_str, "fixed") == 0) {
+        if (strcmp(type_str, "fixed") == 0) {
             should_include = 1;  // Always include fixed counters
         } else {
-            should_include = is_index_selected(event_idx, selected_indices, num_selected);
+            should_include = is_index_selected(event_idx, selected_indices, num_selected); // check if the index from the csv matches env variable
         }
         
         if (!should_include) {
             continue;  // Skip this event
-        }
-        
-        // Validate event name
-        if (validate_event_name(event_name_buf) != 0) {
-            pmc_set_error("Unknown event name: %s", event_name_buf);
-            for (size_t j = 0; j < idx; j++) {
-                free((void*)events[j].event);
-            }
-            free(events);
-            fclose(fp);
-            return -1;
         }
         
         // Duplicate event name string (will be freed when handle is destroyed)
@@ -708,6 +673,25 @@ static int load_events_from_csv(const char *csv_path,
         // Parse mode
         if (parse_mode(mode_str, &events[idx].mode) != 0) {
             pmc_set_error("Unknown mode: %s", mode_str);
+            for (size_t j = 0; j <= idx; j++) {
+                free((void*)events[j].event);
+            }
+            free(events);
+            fclose(fp);
+            return -1;
+        }
+        
+        // Parse event number and umask (support both hex and decimal)
+        events[idx].event_number = (uint32_t)strtoul(event_number_str, NULL, 0);
+        events[idx].umask = (uint32_t)strtoul(umask_str, NULL, 0);
+        
+        // Determine if raw or fixed
+        if (strcmp(type_str, "fixed") == 0) {
+            events[idx].is_raw = 0;  // Fixed counter
+        } else if (strcmp(type_str, "raw") == 0) {
+            events[idx].is_raw = 1;  // Raw programmable counter
+        } else {
+            pmc_set_error("Unknown type: %s (expected 'raw' or 'fixed')", type_str);
             for (size_t j = 0; j <= idx; j++) {
                 free((void*)events[j].event);
             }
@@ -782,6 +766,9 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
             handle->requests[i].sample_period
         );
         config.precise_ip = handle->requests[i].precise_ip;
+        config.event_number = handle->requests[i].event_number;
+        config.umask = handle->requests[i].umask;
+        config.is_raw = handle->requests[i].is_raw;
         
         handle->contexts[i] = pmc_create(&config);
         if (!handle->contexts[i]) {
@@ -1088,8 +1075,10 @@ int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
                             (unsigned long long)samples[j].ip);
                     fprintf(fp, "          \"pid\": %u,\n", samples[j].pid);
                     fprintf(fp, "          \"tid\": %u,\n", samples[j].tid);
-                    fprintf(fp, "          \"time\": %llu\n", 
+                    fprintf(fp, "          \"time\": %llu,\n", 
                             (unsigned long long)samples[j].time);
+                    fprintf(fp, "          \"count\": %llu\n", 
+                            (unsigned long long)samples[j].count);
                     fprintf(fp, "        }");
                     if (j < num_samples - 1) fprintf(fp, ",");
                     fprintf(fp, "\n");
