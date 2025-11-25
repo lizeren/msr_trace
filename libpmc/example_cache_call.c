@@ -81,10 +81,24 @@ int main(int argc, char **argv) {
     pmc_measure_end(pmc, 1);  // 1 = auto-report results and export to JSON
 
 
-    pmc_multi_handle_t *pmc2 = pmc_measure_begin_csv("workload2", NULL);  // NULL = use default "pmc_events.csv"
-    volatile uint64_t result2 = workload(iters);
-    (void)result2;
-    pmc_measure_end(pmc2, 1);  // 1 = auto-report results and export to JSON
+    // Second measurement with different label
+    pmc_multi_handle_t *pmc2 = pmc_measure_begin_csv("workload2", NULL);
+    if (pmc2) {
+        volatile uint64_t result2 = workload(iters);
+        (void)result2;
+        pmc_measure_end(pmc2, 1);
+    }
+
+    // This should NOT be measured because the label "workload2" was already used
+    printf("\nAttempting duplicate measurement with same label 'workload2'...\n");
+    pmc_multi_handle_t *pmc3 = pmc_measure_begin_csv("workload2", NULL);
+    if (pmc3) {
+        volatile uint64_t result3 = workload(iters);
+        (void)result3;
+        pmc_measure_end(pmc3, 1);
+    } else {
+        printf("Duplicate measurement correctly prevented.\n");
+    }
     
     return 0;   
 }

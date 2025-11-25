@@ -23,6 +23,38 @@
 #  define PAGE_SIZE 4096
 #endif
 
+// ===== Label tracking to prevent duplicate measurements =====
+#define MAX_LABELS 128
+#define MAX_LABELS_LENGTH 256
+
+static struct {
+    char labels[MAX_LABELS][MAX_LABELS_LENGTH];
+    size_t count;
+} measured_labels = {0};
+
+// ===== CSV event caching =====
+static pmc_event_request_t *cached_events = NULL;
+static size_t cached_num_events = 0;
+
+static int is_label_measured(const char *label) {
+    for (size_t i = 0; i < measured_labels.count; i++) {
+        if (strcmp(measured_labels.labels[i], label) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int add_measured_label(const char *label) {
+    if (measured_labels.count >= MAX_LABELS) {
+        return -1;  // Too many labels
+    }
+    strncpy(measured_labels.labels[measured_labels.count], label, sizeof(measured_labels.labels[0]) - 1);
+    measured_labels.labels[measured_labels.count][sizeof(measured_labels.labels[0]) - 1] = '\0';
+    measured_labels.count++;
+    return 0;
+}
+
 // ===== Thread-local error handling =====
 static __thread char pmc_error_buf[256] = {0};
 
@@ -708,6 +740,18 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
         return NULL;
     }
     
+    // Check if this label has already been measured
+    if (is_label_measured(label)) {
+        fprintf(stderr, "PMC: Label '%s' already measured, skipping.\n", label);
+        return NULL;  // Events are cached, don't free
+    }
+    
+    // Add label to tracking
+    if (add_measured_label(label) != 0) {
+        pmc_set_error("Too many measurement labels (max %d)", MAX_LABELS);
+        return NULL;
+    }
+    
     // Allocate multi-handle
     pmc_multi_handle_t *handle = calloc(1, sizeof(pmc_multi_handle_t));
     if (!handle) {
@@ -728,18 +772,11 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
         free(handle->contexts);
         free(handle->requests);
         free(handle);
-        if (should_free_events) free((void*)events);
         return NULL;
     }
     
-    // Copy requests (shallow copy - event pointers are shared)
+    // Copy requests (shallow copy - event pointers point to cached strings)
     memcpy(handle->requests, events, num_events * sizeof(pmc_event_request_t));
-    
-    // Free the input events array if needed (came from CSV load)
-    // Note: We keep the event name strings alive since handle->requests now references them
-    if (should_free_events) {
-        free((void*)events);  // Free array, but NOT the event name strings
-    }
     
     // Create individual PMC contexts for each event
     for (size_t i = 0; i < num_events; i++) {
@@ -795,19 +832,17 @@ pmc_multi_handle_t* pmc_measure_begin_csv(const char *label, const char *csv_pat
         return NULL;
     }
     
-    // Use default CSV path if not provided
-    const char *path = csv_path ? csv_path : "pmc_events.csv";
-    
-    // Load events from CSV
-    pmc_event_request_t *events = NULL;
-    size_t num_events = 0;
-    
-    if (load_events_from_csv(path, &events, &num_events) != 0) {
-        return NULL;  // Error already set by load_events_from_csv
+    // Load events once if not already cached
+    if (!cached_events) {
+        const char *path = csv_path ? csv_path : "pmc_events.csv";
+        
+        if (load_events_from_csv(path, &cached_events, &cached_num_events) != 0) {
+            return NULL;  // Error already set by load_events_from_csv
+        }
     }
     
-    // Initialize measurement (will free events array)
-    return pmc_measure_begin_internal(label, events, num_events, 1);
+    // Reuse cached events (don't free them)
+    return pmc_measure_begin_internal(label, cached_events, cached_num_events, 0);
 }
 
 void pmc_measure_end(pmc_multi_handle_t *handle, int report) {
@@ -839,11 +874,8 @@ void pmc_measure_end(pmc_multi_handle_t *handle, int report) {
         if (handle->contexts[i]) {
             pmc_destroy(handle->contexts[i]);
         }
-        // Free event name strings (allocated by CSV parser)
-        if (handle->requests[i].event) {
-            free((void*)handle->requests[i].event);
-        }
     }
+    // Note: Don't free event name strings - they're cached and shared
     
     free(handle->contexts);
     free(handle->requests);
