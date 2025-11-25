@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     
     // ===== THIS IS ALL YOU NEED! =====
     // Start measurement (loads events from CSV, creates contexts, starts all counters)
-    pmc_multi_handle_t *pmc = pmc_measure_begin_csv("workload", NULL);  // NULL = use default "pmc_events.csv"
+    pmc_multi_handle_t *pmc = pmc_measure_begin_csv("workload1", NULL);  // NULL = use default "pmc_events.csv"
     
     if (!pmc) {
         fprintf(stderr, "ERROR: Failed to start PMC: %s\n", pmc_get_error());
@@ -76,10 +76,15 @@ int main(int argc, char **argv) {
     // Run workload
     volatile uint64_t result = workload(iters);
     (void)result;
-    
+
     // Stop measurement and get automatic batch report
     pmc_measure_end(pmc, 1);  // 1 = auto-report results and export to JSON
+
+
+    pmc_multi_handle_t *pmc2 = pmc_measure_begin_csv("workload2", NULL);  // NULL = use default "pmc_events.csv"
+    volatile uint64_t result2 = workload(iters);
+    (void)result2;
+    pmc_measure_end(pmc2, 1);  // 1 = auto-report results and export to JSON
     
-    
-    return 0;
+    return 0;   
 }

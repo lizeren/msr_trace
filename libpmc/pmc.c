@@ -556,19 +556,9 @@ static int load_events_from_csv(const char *csv_path,
         strtok(NULL, ",");  // umask
         strtok(NULL, ",");  // mode
         strtok(NULL, ",");  // sample_period
-        char *type_token = strtok(NULL, ",");
+        strtok(NULL, ",");  // type
         
-        if (type_token) {
-            trim_whitespace(type_token);
-            
-            // Always include fixed type events
-            if (strcmp(type_token, "fixed") == 0) {
-                count++;
-                continue;
-            }
-        }
-        
-        // For raw type events, check if index is in filter
+        // Check if index is in filter (applies to both raw and fixed)
         if (is_index_selected(event_idx, selected_indices, num_selected)) {
             count++;
         }
@@ -646,15 +636,8 @@ static int load_events_from_csv(const char *csv_path,
         
         int event_idx = atoi(index_str);
         
-        // Apply filter: include if fixed type OR selected index
-        int should_include = 0;
-        if (strcmp(type_str, "fixed") == 0) {
-            should_include = 1;  // Always include fixed counters
-        } else {
-            should_include = is_index_selected(event_idx, selected_indices, num_selected); // check if the index from the csv matches env variable
-        }
-        
-        if (!should_include) {
+        // Apply filter: check if index is in selection (applies to both raw and fixed)
+        if (!is_index_selected(event_idx, selected_indices, num_selected)) {
             continue;  // Skip this event
         }
         
@@ -1002,32 +985,51 @@ static void write_json_string(FILE *fp, const char *str) {
     fputc('"', fp);
 }
 
-int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
-    if (!handle || !json_path) {
-        pmc_set_error("Invalid parameters");
-        return -1;
+// Helper: Read entire file into memory
+static char* read_entire_file(const char *path, size_t *out_size) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return NULL;
+    
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    if (size < 0) {
+        fclose(fp);
+        return NULL;
+    }
+    fseek(fp, 0, SEEK_SET);
+    
+    char *buffer = malloc(size + 1);
+    if (!buffer) {
+        fclose(fp);
+        return NULL;
     }
     
-    FILE *fp = fopen(json_path, "w");
-    if (!fp) {
-        pmc_set_error("Failed to open JSON file: %s", strerror(errno));
-        return -1;
-    }
+    size_t read_size = fread(buffer, 1, size, fp);
+    buffer[read_size] = '\0';
+    fclose(fp);
     
+    if (out_size) *out_size = read_size;
+    return buffer;
+}
+
+// Helper: Write a single measurement to file pointer
+static void write_measurement_json(FILE *fp, pmc_multi_handle_t *handle, int indent_level) {
     // Get current timestamp
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     char timestamp[64];
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", tm_info);
     
-    // Write JSON header
-    fprintf(fp, "{\n");
-    fprintf(fp, "  \"label\": ");
+    const char *indent = "    ";
+    
+    // Write measurement header
+    fprintf(fp, "%s{\n", indent);
+    fprintf(fp, "%s  \"label\": ", indent);
     write_json_string(fp, handle->label);
     fprintf(fp, ",\n");
-    fprintf(fp, "  \"timestamp\": \"%s\",\n", timestamp);
-    fprintf(fp, "  \"num_events\": %zu,\n", handle->num_events);
-    fprintf(fp, "  \"events\": [\n");
+    fprintf(fp, "%s  \"timestamp\": \"%s\",\n", indent, timestamp);
+    fprintf(fp, "%s  \"num_events\": %zu,\n", indent, handle->num_events);
+    fprintf(fp, "%s  \"events\": [\n", indent);
     
     // Write each event
     for (size_t i = 0; i < handle->num_events; i++) {
@@ -1037,15 +1039,15 @@ int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
         const char *event_name = handle->requests[i].event;
         const char *mode = mode_to_string(handle->requests[i].mode);
         
-        fprintf(fp, "    {\n");
-        fprintf(fp, "      \"index\": %zu,\n", i + 1);
-        fprintf(fp, "      \"event_name\": \"%s\",\n", event_name);
-        fprintf(fp, "      \"mode\": \"%s\",\n", mode);
+        fprintf(fp, "%s    {\n", indent);
+        fprintf(fp, "%s      \"index\": %zu,\n", indent, i + 1);
+        fprintf(fp, "%s      \"event_name\": \"%s\",\n", indent, event_name);
+        fprintf(fp, "%s      \"mode\": \"%s\",\n", indent, mode);
         
         // Read count
         uint64_t count = 0;
         pmc_read_count(ctx, &count);
-        fprintf(fp, "      \"count\": %llu", (unsigned long long)count);
+        fprintf(fp, "%s      \"count\": %llu", indent, (unsigned long long)count);
         
         // Handle sampling modes
         if (handle->requests[i].mode == PMC_MODE_SAMPLING || 
@@ -1054,10 +1056,10 @@ int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
             
             // Output appropriate label for period vs frequency
             if (handle->requests[i].mode == PMC_MODE_SAMPLING) {
-                fprintf(fp, "      \"sample_period\": %llu,\n", 
+                fprintf(fp, "%s      \"sample_period\": %llu,\n", indent,
                         (unsigned long long)handle->requests[i].sample_period);
             } else {
-                fprintf(fp, "      \"sample_freq_hz\": %llu,\n", 
+                fprintf(fp, "%s      \"sample_freq_hz\": %llu,\n", indent,
                         (unsigned long long)handle->requests[i].sample_period);
             }
             
@@ -1066,44 +1068,115 @@ int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
             size_t num_samples = 0;
             
             if (pmc_read_samples(ctx, &samples, &num_samples, 0) == 0) {
-                fprintf(fp, "      \"num_samples\": %zu,\n", num_samples);
-                fprintf(fp, "      \"samples\": [\n");
+                fprintf(fp, "%s      \"num_samples\": %zu,\n", indent, num_samples);
+                fprintf(fp, "%s      \"samples\": [\n", indent);
                 
                 for (size_t j = 0; j < num_samples; j++) {
-                    fprintf(fp, "        {\n");
-                    fprintf(fp, "          \"ip\": \"0x%llx\",\n", 
+                    fprintf(fp, "%s        {\n", indent);
+                    fprintf(fp, "%s          \"ip\": \"0x%llx\",\n", indent,
                             (unsigned long long)samples[j].ip);
-                    fprintf(fp, "          \"pid\": %u,\n", samples[j].pid);
-                    fprintf(fp, "          \"tid\": %u,\n", samples[j].tid);
-                    fprintf(fp, "          \"time\": %llu,\n", 
+                    fprintf(fp, "%s          \"pid\": %u,\n", indent, samples[j].pid);
+                    fprintf(fp, "%s          \"tid\": %u,\n", indent, samples[j].tid);
+                    fprintf(fp, "%s          \"time\": %llu,\n", indent,
                             (unsigned long long)samples[j].time);
-                    fprintf(fp, "          \"count\": %llu\n", 
+                    fprintf(fp, "%s          \"count\": %llu\n", indent,
                             (unsigned long long)samples[j].count);
-                    fprintf(fp, "        }");
+                    fprintf(fp, "%s        }", indent);
                     if (j < num_samples - 1) fprintf(fp, ",");
                     fprintf(fp, "\n");
                 }
                 
-                fprintf(fp, "      ]\n");
+                fprintf(fp, "%s      ]\n", indent);
                 free(samples);
             } else {
-                fprintf(fp, "      \"num_samples\": 0,\n");
-                fprintf(fp, "      \"samples\": []\n");
+                fprintf(fp, "%s      \"num_samples\": 0,\n", indent);
+                fprintf(fp, "%s      \"samples\": []\n", indent);
             }
         } else {
             fprintf(fp, "\n");
         }
         
-        fprintf(fp, "    }");
+        fprintf(fp, "%s    }", indent);
         if (i < handle->num_events - 1) fprintf(fp, ",");
         fprintf(fp, "\n");
     }
     
-    // Write JSON footer
+    // Write measurement footer
+    fprintf(fp, "%s  ]\n", indent);
+    fprintf(fp, "%s}", indent);
+}
+
+int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
+    if (!handle || !json_path) {
+        pmc_set_error("Invalid parameters");
+        return -1;
+    }
+    
+    // Check if file exists and read existing measurements
+    size_t existing_size = 0;
+    char *existing_content = read_entire_file(json_path, &existing_size);
+    int has_existing = (existing_content != NULL && existing_size > 0);
+    
+    // Open file for writing
+    FILE *fp = fopen(json_path, "w");
+    if (!fp) {
+        pmc_set_error("Failed to open JSON file: %s", strerror(errno));
+        free(existing_content);
+        return -1;
+    }
+    
+    // Write file header
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"measurements\": [\n");
+    
+    // If existing measurements, extract and write them first
+    if (has_existing) {
+        // Find the start of measurements array
+        char *measurements_start = strstr(existing_content, "\"measurements\"");
+        if (measurements_start) {
+            // Find the opening bracket of the array
+            char *array_start = strchr(measurements_start, '[');
+            if (array_start) {
+                array_start++; // Move past '['
+                
+                // Find the closing bracket (look from end)
+                char *array_end = strrchr(array_start, ']');
+                if (array_end && array_end > array_start) {
+                    // Extract the measurements content (between [ and ])
+                    size_t content_len = array_end - array_start;
+                    
+                    // Skip leading whitespace
+                    while (content_len > 0 && (*array_start == ' ' || *array_start == '\n' || *array_start == '\t')) {
+                        array_start++;
+                        content_len--;
+                    }
+                    
+                    // Skip trailing whitespace
+                    while (content_len > 0 && (array_start[content_len-1] == ' ' || 
+                           array_start[content_len-1] == '\n' || array_start[content_len-1] == '\t')) {
+                        content_len--;
+                    }
+                    
+                    // Write existing measurements if not empty
+                    if (content_len > 0) {
+                        fwrite(array_start, 1, content_len, fp);
+                        fprintf(fp, ",\n");
+                    }
+                }
+            }
+        }
+    }
+    
+    // Write new measurement
+    write_measurement_json(fp, handle, 0);
+    fprintf(fp, "\n");
+    
+    // Write file footer
     fprintf(fp, "  ]\n");
     fprintf(fp, "}\n");
     
     fclose(fp);
+    free(existing_content);
     return 0;
 }
 

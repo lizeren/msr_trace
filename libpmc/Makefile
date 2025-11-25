@@ -54,6 +54,7 @@ clean:
 	@echo "Cleaning build artifacts..."
 	rm -f $(LIB_NAME) $(LIB_OBJS) $(example) $(STANDALONE)
 	rm -f *.o
+	rm -f pmc_results.json
 
 # Install library system-wide (requires sudo)
 install: $(LIB_NAME)
