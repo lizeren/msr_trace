@@ -13,3 +13,9 @@ make
 ```bash
 PMC_EVENT_INDICES="0,1,2,3" ./example_cache_call 1000 
 ```
+
+when using as libpmc
+
+```bash
+export PMC_EVENT_INDICES="0,1,2,3"
+```
