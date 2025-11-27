@@ -230,14 +230,14 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
         // Event-based sampling: sample every N events
         attr.sample_period = config->sample_period;
         attr.freq = 0;
-        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
+        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_READ | PERF_SAMPLE_CPU | PERF_SAMPLE_PERIOD;
         // attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
         attr.wakeup_events = 1;
     } else if (config->mode == PMC_MODE_SAMPLING_FREQ) {
         // Frequency-based sampling: sample at N Hz
         attr.sample_freq = config->sample_period;  // Reuse field for frequency (Hz)
         attr.freq = 1;  // Enable frequency mode
-        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
+        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_READ | PERF_SAMPLE_CPU | PERF_SAMPLE_PERIOD;
         // attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
         attr.wakeup_events = 1;
     }
@@ -396,24 +396,26 @@ int pmc_read_samples(pmc_ctx_t *ctx, pmc_sample_t **samples,
         if (h.type == PERF_RECORD_SAMPLE) {
             pmc_sample_t *s = &(*samples)[idx];
             
-            // Expected layout: IP, PID, TID, TIME, READ (value, time_enabled, time_running)
-            // size_t expected_size = sizeof(uint64_t) + 2*sizeof(uint32_t) + sizeof(uint64_t) + 3*sizeof(uint64_t);
-            
-            // Expected layout: IP, PID, TID, TIME, READ (value)
-            size_t expected_size = sizeof(uint64_t) + 2*sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint64_t);
-
+            // Expected layout: IP, PID/TID, TIME, CPU/RES, PERIOD, READ
+            // According to perf_event.h lines 776-785
+            // IP (8) + PID (4) + TID (4) + TIME (8) + CPU (4) + RES (4) + PERIOD (8) + READ (8) = 48 bytes
+            size_t expected_size = sizeof(uint64_t) + 2*sizeof(uint32_t) + sizeof(uint64_t) + 
+                                   2*sizeof(uint32_t) + 2*sizeof(uint64_t);
+        
             if (rem >= expected_size) {
-                ring_read_bytes(r, &temp_tail, &s->ip, sizeof(s->ip));
-                ring_read_bytes(r, &temp_tail, &s->pid, sizeof(s->pid));
-                ring_read_bytes(r, &temp_tail, &s->tid, sizeof(s->tid));
-                ring_read_bytes(r, &temp_tail, &s->time, sizeof(s->time));
+                // Read in the CORRECT order per kernel documentation
+                ring_read_bytes(r, &temp_tail, &s->ip, sizeof(s->ip));       // PERF_SAMPLE_IP
+                ring_read_bytes(r, &temp_tail, &s->pid, sizeof(s->pid));     // PERF_SAMPLE_TID (pid)
+                ring_read_bytes(r, &temp_tail, &s->tid, sizeof(s->tid));     // PERF_SAMPLE_TID (tid)
+                ring_read_bytes(r, &temp_tail, &s->time, sizeof(s->time));   // PERF_SAMPLE_TIME
+                ring_read_bytes(r, &temp_tail, &s->cpu, sizeof(s->cpu));     // PERF_SAMPLE_CPU (cpu)
+                ring_read_bytes(r, &temp_tail, &s->res, sizeof(s->res));     // PERF_SAMPLE_CPU (res)
+                ring_read_bytes(r, &temp_tail, &s->period, sizeof(s->period)); // PERF_SAMPLE_PERIOD
                 
-                // Read the counter value (PERF_SAMPLE_READ format)
-                uint64_t value, time_enabled, time_running;
-                ring_read_bytes(r, &temp_tail, &value, sizeof(value));
-                // ring_read_bytes(r, &temp_tail, &time_enabled, sizeof(time_enabled));
-                // ring_read_bytes(r, &temp_tail, &time_running, sizeof(time_running));
-                s->count = value;  // Store the counter value at this sample point
+                // Read the counter value (PERF_SAMPLE_READ - just u64 value when no read_format flags)
+                uint64_t value;
+                ring_read_bytes(r, &temp_tail, &value, sizeof(value));       // PERF_SAMPLE_READ
+                s->count = value;
                 
                 idx++;
                 rem -= expected_size;
@@ -437,10 +439,11 @@ int pmc_read_samples(pmc_ctx_t *ctx, pmc_sample_t **samples,
 void pmc_print_sample(const pmc_sample_t *sample, int index) {
     if (!sample) return;
 
-    printf("SAMPLE #%d  pid=%u tid=%u time=%llu count=%llu\n", 
-           index, sample->pid, sample->tid, 
+    printf("SAMPLE #%d  pid=%u tid=%u cpu=%u time=%llu count=%llu period=%llu\n", 
+           index, sample->pid, sample->tid, sample->cpu,
            (unsigned long long)sample->time,
-           (unsigned long long)sample->count);
+           (unsigned long long)sample->count,
+           (unsigned long long)sample->period);
 
     // Try to resolve symbol
     Dl_info info;
@@ -523,7 +526,7 @@ static int load_events_from_csv(const char *csv_path,
                                 size_t *num_events_out) {
     FILE *fp = fopen(csv_path, "r");
     if (!fp) {
-        pmc_set_error("Failed to open CSV file: %s", csv_path);
+        printf("ERROR: Failed to open CSV file: %s\n", csv_path);
         return -1;
     }
     
@@ -1109,10 +1112,13 @@ static void write_measurement_json(FILE *fp, pmc_multi_handle_t *handle, int ind
                             (unsigned long long)samples[j].ip);
                     fprintf(fp, "%s          \"pid\": %u,\n", indent, samples[j].pid);
                     fprintf(fp, "%s          \"tid\": %u,\n", indent, samples[j].tid);
+                    fprintf(fp, "%s          \"cpu\": %u,\n", indent, samples[j].cpu);
                     fprintf(fp, "%s          \"time\": %llu,\n", indent,
                             (unsigned long long)samples[j].time);
-                    fprintf(fp, "%s          \"count\": %llu\n", indent,
+                    fprintf(fp, "%s          \"count\": %llu,\n", indent,
                             (unsigned long long)samples[j].count);
+                    fprintf(fp, "%s          \"period\": %llu\n", indent,
+                            (unsigned long long)samples[j].period);
                     fprintf(fp, "%s        }", indent);
                     if (j < num_samples - 1) fprintf(fp, ",");
                     fprintf(fp, "\n");

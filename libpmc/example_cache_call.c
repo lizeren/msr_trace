@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     // ===== THIS IS ALL YOU NEED! =====
     // Start measurement (loads events from CSV, creates contexts, starts all counters)
     pmc_multi_handle_t *pmc = pmc_measure_begin_csv("workload1", NULL);  // NULL = use default "pmc_events.csv"
-    
+
     if (!pmc) {
         fprintf(stderr, "ERROR: Failed to start PMC: %s\n", pmc_get_error());
         fprintf(stderr, "Tip: sudo sysctl kernel.perf_event_paranoid=1\n");

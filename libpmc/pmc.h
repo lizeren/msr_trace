@@ -59,6 +59,9 @@ typedef struct {
     uint32_t tid;      // Thread ID
     uint64_t time;     // Timestamp
     uint64_t count;    // Counter value at this sample point
+    uint32_t cpu;      // CPU number where sample was taken
+    uint32_t res;      // Reserved (padding)
+    uint64_t period;   // Sample period value
 } pmc_sample_t;
 
 // ===== Multi-Event Request =====
