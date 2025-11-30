@@ -8,7 +8,7 @@ with different PMC events (1 at a time), extracting temporal features for ML cla
 Automatically reads events from pmc_events.csv and measures them individually.
 
 Usage:
-    python3 collect_pmc_features.py --target ./example_cache_call --runs 10
+    python3 collect_pmc_features.py --target ./example_cache_call --runs 5 --total 2
 """
 
 import json
@@ -39,6 +39,10 @@ class PMCTemporalCollector:
         # Verify CSV exists
         if not os.path.exists(csv_file):
             raise FileNotFoundError(f"CSV file not found: {csv_file}")
+        
+        # Cache event name to index mapping (optimization: read CSV only once)
+        self.event_name_map = self.build_event_name_to_index_map()
+        print(f"✓ Cached {len(self.event_name_map)} event mappings from {csv_file}")
     
     def read_event_indices_from_csv(self) -> List[int]:
         """Read a CSV file and returns a list of integers taken from the "index" column of that file."""
@@ -71,7 +75,7 @@ class PMCTemporalCollector:
         
         return event_map
     
-    def collect_events(self, event_indices: List[int], num_runs: int = 10) -> int:
+    def collect_events(self, event_indices: List[int], num_runs: int = 5) -> int:
         """
         Collect temporal data for multiple events simultaneously across multiple runs.
         Extracts data for ALL workloads found in the target program output.
@@ -169,7 +173,9 @@ class PMCTemporalCollector:
                 print("FAILED (no temporal data)")
         
         # We have completed the user-specified number of runs of the target program.
+        # By now we should have samples for the current event batch from all runs in the memory
         # Now we need to average the results across all runs and organize by workload and event.
+        # In this method we store the averaged results in the feature database (an attribute of the class).
         
         # DATA STRUCTURE at this point:
         # run_data = [
@@ -209,6 +215,7 @@ class PMCTemporalCollector:
                     for event_data in events_list:
                         event_idx = event_data['event_index']
                         # Create list for this event if it doesn't exist yet
+                        # (sometimes a target function doesn't have data for this event becuase function too short)
                         if event_idx not in workloads_events[workload_label]:
                             workloads_events[workload_label][event_idx] = []
                         # Append this run's data for this workload and event
@@ -216,8 +223,10 @@ class PMCTemporalCollector:
             
             # STEP 2: Average temporal data across all runs for each workload+event combination
             # Then store the averaged result in the feature database
+            # Sort events by index to ensure consistent ordering in output
             for workload_label, events_by_index in workloads_events.items():
-                for event_idx, event_runs in events_by_index.items():
+                for event_idx in sorted(events_by_index.keys()):  # Sort by event index
+                    event_runs = events_by_index[event_idx]
                     # event_runs is a list of temporal data from all runs for this workload and event
                     # average_temporal_runs() will compute mean timestamps, count statistics, etc.
                     averaged = self.average_temporal_runs(event_runs)
@@ -284,8 +293,8 @@ class PMCTemporalCollector:
         Returns:
             Dictionary mapping workload labels to lists of event data
         """
-        # Build mapping from event name to CSV index
-        event_name_map = self.build_event_name_to_index_map()
+        # Use cached event name to CSV index mapping (optimization: no file I/O)
+        event_name_map = self.event_name_map
         
         workload_data = {}  # {workload_label: [event_data1, event_data2, ...]}
         measurements = pmc_data.get('measurements', [])
@@ -517,8 +526,14 @@ def main():
           - Each run measures all events in the batch simultaneously
           - Extract temporal features from each run
           - Average features across runs
-          - Merge with existing batches and save
+          - Store in memory (no file I/O yet)
+       d. After all batches complete, save once to disk
     4. Output: pmc_features_1.json, pmc_features_2.json, ..., pmc_features_N.json
+    
+    OPTIMIZATION: One save per iteration (not per batch)
+    - All data held in memory during batch collection (~1MB)
+    - Single write at end = 5-10x faster than checkpoint approach
+    - If script fails, only current iteration is lost
     
     FINAL OUTPUT FILE STRUCTURE (each pmc_features_N.json):
     {
@@ -541,7 +556,7 @@ Example:
   # Collect all events from pmc_events.csv (1 event at a time)
   # Automatically extracts ALL workloads from the target program
   # Deletes old results and builds complete pmc_features.json
-  python3 collect_pmc_features.py --target ./example_cache_call --runs 10
+  python3 collect_pmc_features.py --target ./example_cache_call --runs 5
   
   # Generate multiple feature files (pmc_features_1.json, pmc_features_2.json, etc.)
   python3 collect_pmc_features.py --target ./rsa_test --runs 5 --total 2
@@ -549,14 +564,14 @@ Example:
     )
     
     parser.add_argument('--target', required=True, help='Path to target binary')
-    parser.add_argument('--runs', type=int, default=10, help='Number of runs per event (default: 10)')
+    parser.add_argument('--runs', type=int, default=5, help='Number of runs per event (default: 5)')
     parser.add_argument('--total', type=int, default=1, help='Number of complete feature collection iterations (default: 1)')
     
     args = parser.parse_args()
     
     # Hardcoded defaults
     csv_file = 'pmc_events.csv'
-    batch_size = 3 # collect 3 event at a time
+    batch_size = 4 # collect 4 event at a time
     
     # Loop for multiple iterations if --total is specified
     all_iterations_success = True
@@ -609,7 +624,8 @@ Example:
             batch = event_indices[i:i+batch_size]
             event_batches.append(batch)
         
-        print(f"Will collect {len(event_batches)} events ({batch_size} event at a time)")
+        print(f"Will collect {len(event_batches)} batches ({batch_size} events at a time)")
+        print(f"Strategy: Hold all data in memory, save once at end of iteration\n")
         
         # Collect data for each batch
         success_count = 0
@@ -627,26 +643,17 @@ Example:
             
             if num_successful > 0:
                 success_count += 1
-                # Load existing features from file to merge with new batch
-                # This is necessary because each batch generates partial data
-                # After all batches are complete, the file will contain data for ALL events
-                if batch_idx > 0 and os.path.exists(output_file):
-                    existing_db = {}
-                    try:
-                        with open(output_file) as f:
-                            existing_db = json.load(f)
-                        # Merge existing data into current feature_db
-                        # This combines data from previous batches with the current batch
-                        for workload, events in existing_db.items():
-                            if workload not in collector.feature_db:
-                                collector.feature_db[workload] = {}
-                            collector.feature_db[workload].update(events)
-                    except Exception as e:
-                        print(f"Warning: Could not load existing features: {e}")
-                
-                # Save after each batch (appends if data was loaded above)
-                # This ensures we don't lose data if the script is interrupted
-                collector.save_features()
+                print(f"  ✓ Batch {batch_idx+1}/{total_batches} complete (holding in memory)")
+        
+        # Save all collected data once at the end of iteration
+        if success_count > 0:
+            print(f"\n{'='*60}")
+            print(f"💾 Saving all {success_count} batches to {output_file}...")
+            collector.save_features()
+            print(f"{'='*60}")
+        else:
+            print(f"\n⚠️  No successful batches to save")
+
         
         # Iteration summary
         print(f"\n{'='*60}")
