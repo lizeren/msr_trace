@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 
 class PMCTemporalCollector:
     def __init__(self, target_binary: str, csv_file: str = "pmc_events.csv", 
-                 output_json: str = "temporal_features.json",
+                 output_json: str = "pmc_features.json",
                  pmc_output: str = "pmc_results.json"):
         self.target_binary = target_binary
         self.csv_file = csv_file
@@ -41,13 +41,13 @@ class PMCTemporalCollector:
             raise FileNotFoundError(f"CSV file not found: {csv_file}")
     
     def read_event_indices_from_csv(self) -> List[int]:
-        """Read all event indices from CSV file."""
+        """Read a CSV file and returns a list of integers taken from the "index" column of that file."""
         event_indices = []
         try:
             with open(self.csv_file, 'r') as f:
-                reader = csv.DictReader(f)
+                reader = csv.DictReader(f) # read each row of the CSV as a Python dictionary.
                 for row in reader:
-                    if row.get('index'):
+                    if row.get('index'): # checks whether there is a value in the "index" column.
                         idx = int(row['index'])
                         event_indices.append(idx)
         except Exception as e:
@@ -76,6 +76,14 @@ class PMCTemporalCollector:
         Collect temporal data for multiple events simultaneously across multiple runs.
         Extracts data for ALL workloads found in the target program output.
         
+        WORKFLOW:
+        1. Run target program multiple times (num_runs)
+        2. Each run measures the specified events (event_indices) simultaneously
+        3. Extract temporal features from each run's PMC output
+        4. Reorganize data: runs->workloads->events becomes workloads->events->runs
+        5. Average temporal data across all runs for each workload+event combination
+        6. Store averaged results in feature database
+        
         Args:
             event_indices: List of event indices to measure simultaneously
             num_runs: Number of times to run the target program
@@ -90,15 +98,22 @@ class PMCTemporalCollector:
         print(f"Runs: {num_runs}")
         print(f"{'='*60}")
         
+        # run_data will accumulate temporal features from each successful run
+        # Structure: List of dictionaries, one per run
+        # [
+        #   {workload1: [event_data1, event_data2], workload2: [event_data1]},  # Run 1
+        #   {workload1: [event_data1, event_data2], workload2: [event_data1]},  # Run 2
+        #   ...
+        # ]
         run_data = []
         
         for run_id in range(num_runs):
             print(f"\n[Run {run_id+1}/{num_runs}]", end=" ")
             
-            # Delete previous PMC output to avoid appending
+            # Delete previous PMC output from libpmc to avoid appending
             if os.path.exists(self.pmc_output):
                 os.remove(self.pmc_output)
-                print(f"Cleaned old {self.pmc_output}", end=" -> ")
+                # print(f"Cleaned old {self.pmc_output}", end=" -> ")
             
             # Set environment variables (multiple events comma-separated)
             env = os.environ.copy()
@@ -141,6 +156,8 @@ class PMCTemporalCollector:
                 continue
             
             # Extract temporal features for all events and all workloads
+            # This returns: {workload_label: [event_data1, event_data2, ...]}
+            # Each event_data contains timestamps, counts, and other temporal info for one event
             workload_data_dict = self.extract_all_temporal_features(pmc_data, target_label=None)
             
             if workload_data_dict:
@@ -151,29 +168,60 @@ class PMCTemporalCollector:
             else:
                 print("FAILED (no temporal data)")
         
-        # Average across runs and store for each workload and event
+        # We have completed the user-specified number of runs of the target program.
+        # Now we need to average the results across all runs and organize by workload and event.
+        
+        # DATA STRUCTURE at this point:
+        # run_data = [
+        #   {workload1: [event_data1, event_data2], workload2: [event_data1]},  # Run 1
+        #   {workload1: [event_data1, event_data2], workload2: [event_data1]},  # Run 2
+        #   ...
+        # ]
+        # Each run contains multiple workloads, each workload contains data for multiple events
+        
         if run_data:
             print(f"\n✓ Collected {len(run_data)}/{num_runs} successful runs")
             
-            # Organize data by workload and event index
-            # workloads_events = {workload_label: {event_idx: [event_data_per_run]}}
+            # STEP 1: Reorganize data structure from "runs->workloads->events" to "workloads->events->runs"
+            # This makes it easier to average all runs for the same workload and event combination
+            
+            # TARGET STRUCTURE:
+            # workloads_events = {
+            #   "workload1": {
+            #     event_idx_0: [event_data_run1, event_data_run2, ...],
+            #     event_idx_1: [event_data_run1, event_data_run2, ...],
+            #   },
+            #   "workload2": {
+            #     event_idx_0: [event_data_run1, event_data_run2, ...],
+            #   }
+            # }
             workloads_events = {}
             
+            # Iterate through each run's data
             for run in run_data:
+                # Each run contains multiple workloads (e.g., "RSA_encrypt", "RSA_decrypt")
                 for workload_label, events_list in run.items():
+                    # Create entry for this workload if it doesn't exist yet
                     if workload_label not in workloads_events:
                         workloads_events[workload_label] = {}
                     
+                    # Each workload has multiple events (e.g., cache-misses, instructions, etc.)
                     for event_data in events_list:
                         event_idx = event_data['event_index']
+                        # Create list for this event if it doesn't exist yet
                         if event_idx not in workloads_events[workload_label]:
                             workloads_events[workload_label][event_idx] = []
+                        # Append this run's data for this workload and event
                         workloads_events[workload_label][event_idx].append(event_data)
             
-            # Average and store each event for each workload
+            # STEP 2: Average temporal data across all runs for each workload+event combination
+            # Then store the averaged result in the feature database
             for workload_label, events_by_index in workloads_events.items():
                 for event_idx, event_runs in events_by_index.items():
+                    # event_runs is a list of temporal data from all runs for this workload and event
+                    # average_temporal_runs() will compute mean timestamps, count statistics, etc.
                     averaged = self.average_temporal_runs(event_runs)
+                    # Store the averaged temporal features in the feature database
                     self.add_to_feature_db(workload_label, event_idx, averaged)
         else:
             print(f"\n✗ No successful runs for events {event_str}")
@@ -184,6 +232,50 @@ class PMCTemporalCollector:
         """
         Extract temporal information for ALL events from ALL workloads in PMC JSON output.
         Only processes sampling mode events.
+        
+        INPUT STRUCTURE (pmc_data from pmc_results.json):
+        {
+          "measurements": [
+            {
+              "label": "RSA_encrypt",
+              "events": [
+                {
+                  "event_name": "cache-misses",
+                  "mode": "sampling",
+                  "count": 12345,
+                  "samples": [
+                    {"time": 1000000, "cpu": 0},
+                    {"time": 1500000, "cpu": 0},
+                    ...
+                  ]
+                },
+                ...
+              ]
+            },
+            {
+              "label": "RSA_decrypt",
+              "events": [...]
+            }
+          ]
+        }
+        
+        OUTPUT STRUCTURE (returned dict):
+        {
+          "RSA_encrypt": [
+            {
+              "event_index": 0,
+              "event_name": "cache-misses",
+              "mode": "sampling",
+              "total_count": 12345,
+              "num_samples": 50,
+              "timestamps_ns": [0, 500000, 1000000, ...],  # normalized to t=0
+              "cpus": [0, 0, 1, ...],
+              "total_duration_ns": 5000000
+            },
+            ...  # more events for RSA_encrypt
+          ],
+          "RSA_decrypt": [...]  # events for RSA_decrypt
+        }
         
         Args:
             pmc_data: Parsed JSON from PMC output file
@@ -213,8 +305,8 @@ class PMCTemporalCollector:
             for event in events:
                 mode = event.get('mode')
                 
-                # Only process sampling modes (skip counting mode)
-                if mode not in ['sampling', 'sampling_freq']:
+                # Only process sampling modes (skip counting mode and sampling_freq mode)
+                if mode not in ['sampling']:
                     continue
                 
                 samples = event.get('samples', [])
@@ -222,7 +314,7 @@ class PMCTemporalCollector:
                     continue
                 
                 # Map event name to CSV index
-                event_name = event['event_name']
+                event_name = event['event_name'] # extract event names from JSON entry "event_name"
                 event_idx = event_name_map.get(event_name, -1)
                 
                 if event_idx == -1:
@@ -242,8 +334,7 @@ class PMCTemporalCollector:
                 # Extract temporal sequence (normalize to t=0)
                 t0 = samples[0]['time']
                 event_info['timestamps_ns'] = [s['time'] - t0 for s in samples]
-                event_info['event_counts'] = [s['count'] for s in samples]
-                event_info['cpus'] = [s['cpu'] for s in samples]
+                event_info['cpus'] = [s['cpu'] for s in samples] # keep track how many CPUs are involved in this workload
                 
                 # Derived features
                 event_info['total_duration_ns'] = event_info['timestamps_ns'][-1]
@@ -256,6 +347,45 @@ class PMCTemporalCollector:
         """
         Average temporal data across multiple runs.
         Uses the median-length run as template and aligns others.
+        
+        INPUT STRUCTURE (run_data):
+        [
+          {  # Run 1
+            "event_index": 0,
+            "event_name": "cache-misses",
+            "total_count": 12345,
+            "num_samples": 50,
+            "timestamps_ns": [0, 500000, 1000000, ...],
+            "total_duration_ns": 5000000
+          },
+          {  # Run 2 (might have different number of samples)
+            "event_index": 0,
+            "event_name": "cache-misses",
+            "total_count": 12500,
+            "num_samples": 48,
+            "timestamps_ns": [0, 520000, 1020000, ...],
+            "total_duration_ns": 5100000
+          },
+          ...  # more runs
+        ]
+        
+        OUTPUT STRUCTURE (averaged result):
+        {
+          "event_name": "cache-misses",
+          "mode": "sampling",
+          "sampling_period": 10000,
+          "num_runs": 5,
+          "timestamps_ns": [0, 510000, 1010000, ...],  # averaged timestamps
+          "num_samples": 50,  # based on median-length run
+          "stats": {
+            "total_count_mean": 12400.0,
+            "total_count_std": 150.5,
+            "duration_mean_ns": 5050000.0,
+            "duration_std_ns": 50000.0,
+            "num_samples_mean": 49.2,
+            "num_samples_std": 1.5
+          }
+        }
         
         Args:
             run_data: List of temporal feature dictionaries from each run
@@ -279,19 +409,15 @@ class PMCTemporalCollector:
         
         # Average each sample position across runs
         timestamps_avg = []
-        counts_avg = []
         
         for i in range(target_len):
             # Collect i-th sample from each run (if it exists)
             ts_vals = [r['timestamps_ns'][i] for r in run_data if i < len(r['timestamps_ns'])]
-            count_vals = [r['event_counts'][i] for r in run_data if i < len(r['event_counts'])]
             
             if ts_vals:
                 timestamps_avg.append(int(np.mean(ts_vals)))
-                counts_avg.append(int(np.mean(count_vals)))
         
         averaged['timestamps_ns'] = timestamps_avg
-        averaged['event_counts'] = counts_avg
         averaged['num_samples'] = len(timestamps_avg)
         
         # Statistics across runs
@@ -307,7 +433,32 @@ class PMCTemporalCollector:
         return averaged
     
     def add_to_feature_db(self, function_label: str, event_index: int, temporal_data: dict):
-        """Add temporal data to the feature database."""
+        """
+        Add temporal data to the feature database.
+        
+        FEATURE DATABASE STRUCTURE (self.feature_db):
+        {
+          "RSA_encrypt": {
+            "event_0": {  # cache-misses
+              "event_name": "cache-misses",
+              "timestamps_ns": [...],
+              "num_samples": 50,
+              "stats": {...}
+            },
+            "event_1": {  # instructions
+              "event_name": "instructions",
+              "timestamps_ns": [...],
+              ...
+            }
+          },
+          "RSA_decrypt": {
+            "event_0": {...},
+            ...
+          }
+        }
+        
+        This structure will be saved to pmc_features.json
+        """
         if function_label not in self.feature_db:
             self.feature_db[function_label] = {}
         
@@ -354,6 +505,34 @@ class PMCTemporalCollector:
 
 
 def main():
+    """
+    MAIN WORKFLOW:
+    1. Parse command-line arguments (--target, --runs, --total)
+    2. Read event indices from pmc_events.csv
+    3. For each iteration (1 to --total):
+       a. Create output file: pmc_features_N.json
+       b. Group events into batches (batch_size events per batch)
+       c. For each batch:
+          - Run target program --runs times
+          - Each run measures all events in the batch simultaneously
+          - Extract temporal features from each run
+          - Average features across runs
+          - Merge with existing batches and save
+    4. Output: pmc_features_1.json, pmc_features_2.json, ..., pmc_features_N.json
+    
+    FINAL OUTPUT FILE STRUCTURE (each pmc_features_N.json):
+    {
+      "RSA_encrypt": {
+        "event_0": {temporal_data with averaged timestamps and stats},
+        "event_1": {temporal_data with averaged timestamps and stats},
+        ...
+      },
+      "RSA_decrypt": {
+        "event_0": {...},
+        ...
+      }
+    }
+    """
     parser = argparse.ArgumentParser(
         description='Collect PMC temporal features for ML classification (measures 1 event at a time)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -361,98 +540,124 @@ def main():
 Example:
   # Collect all events from pmc_events.csv (1 event at a time)
   # Automatically extracts ALL workloads from the target program
-  # Deletes old results and builds complete temporal_features.json
+  # Deletes old results and builds complete pmc_features.json
   python3 collect_pmc_features.py --target ./example_cache_call --runs 10
+  
+  # Generate multiple feature files (pmc_features_1.json, pmc_features_2.json, etc.)
+  python3 collect_pmc_features.py --target ./rsa_test --runs 5 --total 2
         """
     )
     
     parser.add_argument('--target', required=True, help='Path to target binary')
     parser.add_argument('--runs', type=int, default=10, help='Number of runs per event (default: 10)')
+    parser.add_argument('--total', type=int, default=1, help='Number of complete feature collection iterations (default: 1)')
     
     args = parser.parse_args()
     
     # Hardcoded defaults
     csv_file = 'pmc_events.csv'
-    output_file = 'temporal_features.json'
-    batch_size = 1
+    batch_size = 3 # collect 3 event at a time
     
-    # Create collector
-    try:
-        collector = PMCTemporalCollector(
-            target_binary=args.target,
-            csv_file=csv_file,
-            output_json=output_file
-        )
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        return 1
+    # Loop for multiple iterations if --total is specified
+    all_iterations_success = True
     
-    # Read event indices from CSV
-    try:
-        event_indices = collector.read_event_indices_from_csv()
-    except RuntimeError as e:
-        print(f"Error: {e}")
-        return 1
-    
-    if not event_indices:
-        print(f"Error: No events found in {csv_file}")
-        return 1
-    
-    print(f"Found {len(event_indices)} events in {csv_file}: {event_indices}")
-    
-    # Delete old output file to start fresh
-    if os.path.exists(output_file):
-        os.remove(output_file)
-        print(f"✓ Deleted old {output_file}")
-    
-    # Group events into batches (pairs)
-    event_batches = []
-    for i in range(0, len(event_indices), batch_size):
-        batch = event_indices[i:i+batch_size]
-        event_batches.append(batch)
-    
-    print(f"Will collect {len(event_batches)} events (1 event at a time)")
-    
-    # Collect data for each batch
-    success_count = 0
-    total_batches = len(event_batches)
-    
-    for batch_idx, event_batch in enumerate(event_batches):
-        print(f"\n{'#'*60}")
-        print(f"Batch {batch_idx+1}/{total_batches}: Events {event_batch}")
-        print(f"{'#'*60}")
+    for iteration in range(1, args.total + 1):
+  
+        output_file = f'pmc_features_{iteration}.json'
         
-        num_successful = collector.collect_events(
-            event_indices=event_batch,
-            num_runs=args.runs
-        )
+        print(f"\n{'*'*60}")
+        print(f"{'*'*60}")
+        print(f"ITERATION {iteration}/{args.total}")
+        print(f"Output file: {output_file}")
+        print(f"{'*'*60}")
+        print(f"{'*'*60}\n")
         
-        if num_successful > 0:
-            success_count += 1
-            # Load existing features from file to merge with new batch
-            if batch_idx > 0 and os.path.exists(output_file):
-                existing_db = {}
-                try:
-                    with open(output_file) as f:
-                        existing_db = json.load(f)
-                    # Merge existing data into current feature_db
-                    for workload, events in existing_db.items():
-                        if workload not in collector.feature_db:
-                            collector.feature_db[workload] = {}
-                        collector.feature_db[workload].update(events)
-                except Exception as e:
-                    print(f"Warning: Could not load existing features: {e}")
+        # Create collector
+        try:
+            collector = PMCTemporalCollector(
+                target_binary=args.target,
+                csv_file=csv_file,
+                output_json=output_file
+            )
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            return 1
+        
+        # Read event indices from CSV
+        try:
+            event_indices = collector.read_event_indices_from_csv()
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            return 1
+        
+        if not event_indices:
+            print(f"Error: No events found in {csv_file}")
+            return 1
+        
+        print(f"Found {len(event_indices)} events in {csv_file}: {event_indices}")
+        
+        # Delete old output file to start fresh
+        if os.path.exists(output_file):
+            os.remove(output_file)
+            print(f"✓ Deleted old {output_file}")
+        
+        # Group events into batches (pairs)
+        # With batch_size=3, events [0,1,2,3,4,5] become [[0,1,2], [3,4,5]]
+        # Each batch will be measured simultaneously in the same run
+        event_batches = []
+        for i in range(0, len(event_indices), batch_size):
+            batch = event_indices[i:i+batch_size]
+            event_batches.append(batch)
+        
+        print(f"Will collect {len(event_batches)} events ({batch_size} event at a time)")
+        
+        # Collect data for each batch
+        success_count = 0
+        total_batches = len(event_batches)
+        
+        for batch_idx, event_batch in enumerate(event_batches):
+            print(f"\n{'#'*60}")
+            print(f"Batch {batch_idx+1}/{total_batches}: Events {event_batch}")
+            print(f"{'#'*60}")
             
-            # Save after each batch (appends if data was loaded above)
-            collector.save_features()
-    
-    # Final summary
-    print(f"\n{'='*60}")
-    print(f"Collection Complete!")
-    print(f"  Total events: {len(event_indices)}")
-    print(f"  Successful batches: {success_count}/{total_batches}")
-    print(f"  Output: {output_file}")
-    print(f"{'='*60}\n")
+            num_successful = collector.collect_events(
+                event_indices=event_batch,
+                num_runs=args.runs
+            )
+            
+            if num_successful > 0:
+                success_count += 1
+                # Load existing features from file to merge with new batch
+                # This is necessary because each batch generates partial data
+                # After all batches are complete, the file will contain data for ALL events
+                if batch_idx > 0 and os.path.exists(output_file):
+                    existing_db = {}
+                    try:
+                        with open(output_file) as f:
+                            existing_db = json.load(f)
+                        # Merge existing data into current feature_db
+                        # This combines data from previous batches with the current batch
+                        for workload, events in existing_db.items():
+                            if workload not in collector.feature_db:
+                                collector.feature_db[workload] = {}
+                            collector.feature_db[workload].update(events)
+                    except Exception as e:
+                        print(f"Warning: Could not load existing features: {e}")
+                
+                # Save after each batch (appends if data was loaded above)
+                # This ensures we don't lose data if the script is interrupted
+                collector.save_features()
+        
+        # Iteration summary
+        print(f"\n{'='*60}")
+        print(f"Iteration {iteration} Complete!")
+        print(f"  Total events: {len(event_indices)}")
+        print(f"  Successful batches: {success_count}/{total_batches}")
+        print(f"  Output: {output_file}")
+        print(f"{'='*60}\n")
+        
+        if success_count == 0:
+            all_iterations_success = False
     
     # Cleanup: remove pmc_results.json
     pmc_output = 'pmc_results.json'
@@ -460,7 +665,17 @@ Example:
         os.remove(pmc_output)
         print(f"✓ Cleaned up {pmc_output}\n")
     
-    return 0 if success_count > 0 else 1
+    # Final summary
+    print(f"\n{'='*60}")
+    print(f"ALL ITERATIONS COMPLETE!")
+    print(f"  Total iterations: {args.total}")
+    if args.total == 1:
+        print(f"  Output: pmc_features.json")
+    else:
+        print(f"  Output files: pmc_features_1.json to pmc_features_{args.total}.json")
+    print(f"{'='*60}\n")
+    
+    return 0 if all_iterations_success else 1
 
 
 if __name__ == "__main__":
