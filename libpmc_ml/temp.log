@@ -1,0 +1,222 @@
+============================================================
+PMC Logistic Regression Classifier
+============================================================
+Features file: features/pmc_features_*.json
+
+Loading features...
+  Found 150 matching files:
+  Pattern: features/pmc_features_*.json
+  Successfully loaded: 150/150 files
+
+  Loaded 150 files with 31 unique workloads
+
+Extracting feature matrix...
+  Total unique events across all workloads: 38
+  Event keys: ['event_0', 'event_1', 'event_2', 'event_3', 'event_4']...
+
+  Processing 150 files...
+
+============================================================
+  Feature matrix shape: (1550, 380)
+  Total features: 380
+  Total samples: 1550
+  Unique classes: 31
+
+  Samples per class:
+    BN_bin2bn: 50 samples
+    EVP_DigestSign: 50 samples
+    EVP_DigestSignInit: 50 samples
+    EVP_MD_CTX_new: 50 samples
+    EVP_PKEY_CTX_free: 50 samples
+    EVP_PKEY_CTX_new_from_name: 50 samples
+    EVP_PKEY_CTX_set_params: 50 samples
+    EVP_PKEY_assign_RSA: 50 samples
+    EVP_PKEY_free: 50 samples
+    EVP_PKEY_fromdata: 50 samples
+    EVP_PKEY_fromdata_init: 50 samples
+    EVP_PKEY_generate: 50 samples
+    EVP_PKEY_keygen_init: 50 samples
+    EVP_PKEY_new: 50 samples
+    EVP_sha256: 50 samples
+    OSSL_HTTP_REQ_CTX_new: 50 samples
+    OSSL_HTTP_close: 50 samples
+    OSSL_HTTP_get: 50 samples
+    OSSL_HTTP_parse_url: 50 samples
+    OSSL_HTTP_transfer: 50 samples
+    OSSL_LIB_CTX_free: 50 samples
+    OSSL_PARAM_construct_end: 50 samples
+    OSSL_PARAM_construct_octet_string: 50 samples
+    OSSL_PROVIDER_unload: 50 samples
+    RSA_new: 50 samples
+    RSA_private_decrypt: 50 samples
+    RSA_public_encrypt: 50 samples
+    RSA_set0_factors: 50 samples
+    RSA_set0_key: 50 samples
+    RSA_sign_ASN1_OCTET_STRING: 50 samples
+    RSA_verify_ASN1_OCTET_STRING: 50 samples
+============================================================
+
+============================================================
+Feature Normalization (StandardScaler)
+============================================================
+Train/test split: 1240/310
+X_train.shape:  (1240, 380)
+len(X_train):  1240
+y_train shape:  1240
+X_train[0] shape:  380
+
+  Per-column normalization:
+    Number of events: 38
+    Features per event: 10
+    Total features: 380
+    Each of 380 columns normalized independently
+    (Each column gets its own mean and std computed across 1240 samples)
+Features normalized to zero mean, unit variance
+  Mean (before): [598251.2983871   14936.60075515   6435.87807449] ...
+  Mean (after):  [ 7.78051458e-17 -9.04294560e-17 -1.05426420e-16] ...
+  Std (before):  [1172700.01850528   21631.96679707   15266.01695853] ...
+  Std (after):   [1. 1. 1.] ...
+
+Training Logistic Regression...
+  Training samples: 1240
+  Features: 380
+  Classes: 31
+  Training accuracy: 0.9323
+
+============================================================
+Test Set Evaluation
+============================================================
+Accuracy: 0.8968
+
+Confusion Matrix:
+[[10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  6  0  0  0  0  0  2  0  1  0  0  0  0  0  1  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  8  0  0  0  0  0  1  0  0  0  0  0  1  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0 10  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0 10  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  1  0  0  0  0  0  6  0  0  0  0  0  0  0  3  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  2  0  1  0  0  0  0  0  7  0  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10  0  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10  0  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  0  9  0  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10  0  0  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  1  0  0  0  0  0  3  0  0  0  0  0  0  2  4  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  3  0  0  0  3  0  1  0  0  0  0  0  3  0
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10
+   0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+  10  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0 10  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0 10  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0 10  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  3  7  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0 10  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+   0  0  0  0  0  0 10]]
+
+Classification Report:
+                                   precision    recall  f1-score   support
+
+                        BN_bin2bn       1.00      1.00      1.00        10
+                   EVP_DigestSign       1.00      1.00      1.00        10
+               EVP_DigestSignInit       1.00      1.00      1.00        10
+                   EVP_MD_CTX_new       1.00      1.00      1.00        10
+                EVP_PKEY_CTX_free       1.00      1.00      1.00        10
+       EVP_PKEY_CTX_new_from_name       1.00      1.00      1.00        10
+          EVP_PKEY_CTX_set_params       1.00      1.00      1.00        10
+              EVP_PKEY_assign_RSA       1.00      1.00      1.00        10
+                    EVP_PKEY_free       0.60      0.60      0.60        10
+                EVP_PKEY_fromdata       1.00      1.00      1.00        10
+           EVP_PKEY_fromdata_init       0.67      0.80      0.73        10
+                EVP_PKEY_generate       1.00      1.00      1.00        10
+             EVP_PKEY_keygen_init       1.00      1.00      1.00        10
+                     EVP_PKEY_new       1.00      1.00      1.00        10
+                       EVP_sha256       0.43      0.60      0.50        10
+            OSSL_HTTP_REQ_CTX_new       1.00      1.00      1.00        10
+                  OSSL_HTTP_close       0.70      0.70      0.70        10
+                    OSSL_HTTP_get       0.91      1.00      0.95        10
+              OSSL_HTTP_parse_url       1.00      1.00      1.00        10
+               OSSL_HTTP_transfer       1.00      0.90      0.95        10
+                OSSL_LIB_CTX_free       1.00      1.00      1.00        10
+         OSSL_PARAM_construct_end       1.00      0.20      0.33        10
+OSSL_PARAM_construct_octet_string       0.25      0.30      0.27        10
+             OSSL_PROVIDER_unload       1.00      1.00      1.00        10
+                          RSA_new       1.00      1.00      1.00        10
+              RSA_private_decrypt       1.00      1.00      1.00        10
+               RSA_public_encrypt       1.00      1.00      1.00        10
+                 RSA_set0_factors       0.77      1.00      0.87        10
+                     RSA_set0_key       1.00      0.70      0.82        10
+       RSA_sign_ASN1_OCTET_STRING       1.00      1.00      1.00        10
+     RSA_verify_ASN1_OCTET_STRING       1.00      1.00      1.00        10
+
+                         accuracy                           0.90       310
+                        macro avg       0.91      0.90      0.89       310
+                     weighted avg       0.91      0.90      0.89       310
+
+
+  Per-column normalization:
+    Number of events: 38
+    Features per event: 10
+    Total features: 380
+    Each of 380 columns normalized independently
+    (Each column gets its own mean and std computed across 1550 samples)
+
+============================================================
+Cross-Validation (k=5)
+============================================================
+Cross-validation scores: [0.89032258 0.89677419 0.91290323 0.91612903 0.88064516]
+Mean accuracy: 0.8994 (+/- 0.0269)
+
+============================================================
+Top 10 Most Important Features (by coefficient magnitude)
+============================================================
+ 1. BR_INST_RETIRED.ALL_BRANCHES_sample_rate           0.423805
+ 2. BR_MISP_RETIRED.CONDITIONAL_sample_rate            0.367294
+ 3. BR_INST_RETIRED.COND_NTAKEN_sample_rate            0.366912
+ 4. MEM_LOAD_RETIRED.L2_MISS_sample_rate               0.337565
+ 5. ICACHE_64B.IFTAG_MISS_mean_interval                0.336767
+ 6. BR_INST_RETIRED.FAR_BRANCH_sample_rate             0.319023
+ 7. L2_RQSTS.CODE_RD_MISS_sample_rate                  0.305754
+ 8. ITLB_MISSES.STLB_HIT_sample_rate                   0.305189
+ 9. ICACHE_64B.IFTAG_MISS_std_interval                 0.261187
+10. BR_MISP_RETIRED.NEAR_TAKEN_sample_rate             0.261068
+
+Done!
