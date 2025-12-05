@@ -24,7 +24,9 @@ export PMC_EVENT_INDICES="0,1,2,3" && ./rsa_test
 #python collector to run test/rsa_test.c 5 times and save the average results
 python3 collect_pmc_features.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 > result.log
 #train classifier
-python3 train_classifier.py --features "features/pmc_features_*.json"
+python3 train_classifier.py --features "features/pmc_features_*.json" > logistic.log
+#xgboost classifier
+python3 train_xgboost.py --features "features/pmc_features_*.json" > xgboost.log
 # save the model
 python3 train_classifier.py --features "features/pmc_features_*.json" --save-model
 # inference

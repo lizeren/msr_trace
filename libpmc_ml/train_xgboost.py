@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-PMC Logistic Regression Classifier
+PMC XGBoost Classifier
 
-Trains a logistic regression model on PMC temporal features with proper normalization.
+Trains an XGBoost model on PMC temporal features.
+XGBoost often outperforms logistic regression on complex temporal patterns.
 """
 
 import json
@@ -10,11 +11,20 @@ import numpy as np
 from pathlib import Path
 import glob
 import pickle
+import sys
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 import argparse
+
+# Import XGBoost
+try:
+    from xgboost import XGBClassifier
+    import xgboost as xgb
+except ImportError:
+    print("ERROR: XGBoost not installed!")
+    print("Install with: pip install xgboost")
+    sys.exit(1)
 
 
 class PMCFeatureExtractor:
@@ -65,7 +75,6 @@ class PMCFeatureExtractor:
         print(f"  Pattern: {pattern}")
         
         for file_path in files:
-            # print(f"    - {Path(file_path).name}")
             try:
                 with open(file_path, 'r') as f:
                     data = json.load(f)
@@ -92,7 +101,7 @@ class PMCFeatureExtractor:
             List of derived features
         """
         if len(timestamps_ns) == 0:
-            return [0] * self.num_features_per_event
+            return [0] * 10
         
         timestamps = np.array(timestamps_ns)
         
@@ -111,8 +120,7 @@ class PMCFeatureExtractor:
         q50 = np.percentile(timestamps, 50) if len(timestamps) > 0 else 0
         q75 = np.percentile(timestamps, 75) if len(timestamps) > 0 else 0
         
-        # Full feature list (10 features)
-        all_features = [
+        return [
             total_duration,
             mean_interval,
             std_interval,
@@ -124,19 +132,12 @@ class PMCFeatureExtractor:
             q50,
             q75
         ]
-        
-        # Return only the first num_features_per_event features
-        return all_features[:self.num_features_per_event]
     
     def build_feature_matrix(self, pmc_data):
         """
         Build feature matrix from PMC data.
         Uses ALL events across all workloads (union), filling in zeros
         for workloads that don't have certain events.
-        
-        Args:
-            pmc_data: Either a dict (single file) or list of (filename, dict) tuples (multiple files)
-            pmc_data = (pmc_feature1_1.json , {workload_label: {event_key: {event_name: event_name, timestamps_ns: [timestamp1, timestamp2, ...], num_samples: num_samples}}})
         
         Returns:
             X: Feature matrix (n_samples, n_features)
@@ -155,7 +156,6 @@ class PMCFeatureExtractor:
             # Multiple files: iterate through each file's workloads
             for filename, data in pmc_data:
                 for workload_label, events in data.items():
-                    # events = {event_key: {event_name: event_name, timestamps_ns: [timestamp1, timestamp2, ...], num_samples: num_samples}}
                     all_event_keys = all_event_keys.union(set(events.keys()))
         else:
             # Single file: iterate through workloads
@@ -192,13 +192,12 @@ class PMCFeatureExtractor:
                 # Search through single file
                 for workload_label, events in pmc_data.items():
                     if event_key in events:
-                        event_name = events[event_key].get('event_name', event_key) # Get the event name, otherwise use the event key
+                        event_name = events[event_key].get('event_name', event_key)
                         break
             
             event_name_map[event_key] = event_name
             
-            # Full feature name list (10 features)
-            all_feature_names = [
+            feature_names.extend([
                 f"{event_name}_total_duration",
                 f"{event_name}_mean_interval",
                 f"{event_name}_std_interval",
@@ -209,10 +208,7 @@ class PMCFeatureExtractor:
                 f"{event_name}_q25",
                 f"{event_name}_q50",
                 f"{event_name}_q75"
-            ]
-            
-            # Add only the first num_features_per_event feature names
-            feature_names.extend(all_feature_names[:self.num_features_per_event])
+            ])
         
         # Second pass: extract features for each workload using all events
         X = []
@@ -223,7 +219,6 @@ class PMCFeatureExtractor:
             print(f"\n  Processing {len(pmc_data)} files...")
             # Multiple files: each workload in each file becomes a separate sample
             for file_idx, (filename, data) in enumerate(pmc_data, 1):
-                # print(f"\n  File {file_idx}/{len(pmc_data)}: {Path(filename).name}")
                 for workload_label, events in data.items():
                     workload_features = []
                     num_missing = 0
@@ -239,37 +234,14 @@ class PMCFeatureExtractor:
                             )
                         else:
                             # Event doesn't exist for this workload, fill with zeros
-                            temporal_features = [0] * self.num_features_per_event
+                            temporal_features = [0] * 10
                             num_missing += 1
                         
-                        workload_features.extend(temporal_features) 
-                        #one long feature vector (a single list) for a workload that contains:
-                        #all 10 temporal features for event_1
-                        #all 10 temporal features for event_2
-                        #...
-                        #all 10 temporal features for event_37
+                        workload_features.extend(temporal_features)
                     
                     X.append(workload_features)
                     y.append(workload_label)
                     workload_names.append(f"{workload_label}_run{file_idx}")
-                    
-                    # print(f"    {workload_label}: {len(events)}/{len(all_event_keys_sorted)} events " + f"({num_missing} filled with zeros)")
-                    """
-                    X = [
-                        [workload_0_sample0_event_0_feat_0, workload_0_sample0_event_0_feat_1, ..., workload_0_sample0_event_0_feat_9, workload_0_sample0_event_1_feat_0, ..., workload_0_sample0_event_1_feat_9, ...],
-                        [workload_1_sample0_event_0_feat_0, workload_1_sample0_event_0_feat_1, ..., workload_1_sample0_event_0_feat_9, workload_1_sample0_event_1_feat_0, ..., workload_1_sample0_event_1_feat_9, ...],
-                        [workload_2_sample0_event_0_feat_0, workload_2_sample0_event_0_feat_1, ..., workload_2_sample0_event_0_feat_9, workload_2_sample0_event_1_feat_0, ..., workload_2_sample0_event_1_feat_9, ...],
-                        ...
-                        [workload_N_sample0_event_0_feat_0, workload_N_sample0_event_0_feat_1, ..., workload_N_sample0_event_0_feat_9, workload_N_sample0_event_1_feat_0, ..., workload_N_sample0_event_1_feat_9, ...],
-                        [workload_0_sample1_event_0_feat_0, workload_0_sample1_event_0_feat_1, ..., workload_0_sample1_event_0_feat_9, workload_0_sample1_event_1_feat_0, ..., workload_0_sample1_event_1_feat_9, ...],
-                        [workload_1_sample1_event_0_feat_0, workload_1_sample1_event_0_feat_1, ..., workload_1_sample1_event_0_feat_9, workload_1_sample1_event_1_feat_0, ..., workload_1_sample1_event_1_feat_9, ...],
-                        [workload_2_sample1_event_0_feat_0, workload_2_sample1_event_0_feat_1, ..., workload_2_sample1_event_0_feat_9, workload_2_sample1_event_1_feat_0, ..., workload_2_sample1_event_1_feat_9, ...],
-                        ...
-                        [workload_N_sample1_event_0_feat_0, workload_N_sample1_event_0_feat_1, ..., workload_N_sample1_event_0_feat_9, workload_N_sample1_event_1_feat_0, ..., workload_N_sample1_event_1_feat_9, ...],
-                        ...
-                        [workload_0_sampleM_event_0_feat_0, workload_0_sampleM_event_0_feat_1, ..., workload_0_sampleM_event_0_feat_9, workload_0_sampleM_event_1_feat_0, ..., workload_0_sampleM_event_1_feat_9, ...],
-                    ]
-                    """
         else:
             print(f"\n  Event coverage per workload:")
             # Single file: each workload is one sample
@@ -288,7 +260,7 @@ class PMCFeatureExtractor:
                         )
                     else:
                         # Event doesn't exist for this workload, fill with zeros
-                        temporal_features = [0] * self.num_features_per_event
+                        temporal_features = [0] * 10
                         num_missing += 1
                     
                     workload_features.extend(temporal_features)
@@ -310,19 +282,6 @@ class PMCFeatureExtractor:
         Normalize each column independently across samples.
         Each (event, feature_type) combination gets its own mean and std.
         
-        This is correct because:
-        - Each event has a different sampling period
-        - event_0_duration and event_1_duration are on different scales
-        - Each of the 370 columns should be normalized independently
-        
-        Feature structure: [event_0_feat_0, ..., event_0_feat_9, event_1_feat_0, ..., event_N_feat_9]
-        
-        Normalization:
-        - Column 0 (event_0_duration): normalized across all samples
-        - Column 1 (event_0_mean_interval): normalized across all samples
-        - ...
-        - Column 369 (event_36_q75): normalized across all samples
-        
         Args:
             X_train: Training feature matrix (n_samples, n_features)
             X_test: Optional test feature matrix
@@ -338,7 +297,6 @@ class PMCFeatureExtractor:
         print(f"    Features per event: {self.num_features_per_event}")
         print(f"    Total features: {X_train.shape[1]}")
         print(f"    Each of {X_train.shape[1]} columns normalized independently")
-        print(f"    (Each column gets its own mean and std computed across {X_train.shape[0]} samples)")
         
         # StandardScaler normalizes each column independently by default
         X_train_scaled = self.scaler.fit_transform(X_train)
@@ -350,24 +308,32 @@ class PMCFeatureExtractor:
         return X_train_scaled
 
 
-class PMCClassifier:
-    """Logistic Regression classifier for PMC features."""
+class XGBoostClassifier:
+    """XGBoost classifier for PMC features."""
     
-    def __init__(self, max_iter=1000, random_state=42):
-        self.model = LogisticRegression(
-            max_iter=max_iter,
+    def __init__(self, n_estimators=300, max_depth=6, learning_rate=0.1, random_state=42):
+        self.model = XGBClassifier(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            subsample=0.8,
+            colsample_bytree=0.8,
             random_state=random_state,
-            multi_class='ovr',  # One-vs-Rest for multi-class
-            solver='lbfgs'
+            n_jobs=-1,
+            tree_method='hist',      # Fast histogram-based method
+            eval_metric='mlogloss'   # Multi-class log loss
         )
         self.feature_extractor = None
         
     def train(self, X_train, y_train):
-        """Train the classifier."""
-        print(f"\nTraining Logistic Regression...")
+        """Train the XGBoost classifier."""
+        print(f"\nTraining XGBoost Classifier...")
         print(f"  Training samples: {len(X_train)}")
         print(f"  Features: {X_train.shape[1]}")
         print(f"  Classes: {len(np.unique(y_train))}")
+        print(f"  n_estimators: {self.model.n_estimators}")
+        print(f"  max_depth: {self.model.max_depth}")
+        print(f"  learning_rate: {self.model.learning_rate}")
         
         self.model.fit(X_train, y_train)
         
@@ -387,7 +353,18 @@ class PMCClassifier:
         # print(f"\nConfusion Matrix:")
         # print(confusion_matrix(y_test, y_pred))
         print(f"\nClassification Report:")
-        print(classification_report(y_test, y_pred, target_names=label_names))
+        
+        # Get unique labels present in test set
+        unique_test_labels = np.unique(np.concatenate([y_test, y_pred]))
+        
+        if label_names is not None:
+            # Filter target_names to only include classes present in test set
+            target_names_filtered = [label_names[i] for i in unique_test_labels]
+            print(classification_report(y_test, y_pred, 
+                                       labels=unique_test_labels,
+                                       target_names=target_names_filtered))
+        else:
+            print(classification_report(y_test, y_pred, labels=unique_test_labels))
         
         return accuracy, y_pred
     
@@ -404,6 +381,23 @@ class PMCClassifier:
         
         return scores
     
+    def show_feature_importance(self, feature_names, top_n=20):
+        """Show top N most important features."""
+        if not hasattr(self.model, 'feature_importances_'):
+            print("Model not trained yet!")
+            return
+        
+        importances = self.model.feature_importances_
+        indices = np.argsort(importances)[::-1]
+        
+        print(f"\n{'='*60}")
+        print(f"Top {top_n} Most Important Features (XGBoost)")
+        print(f"{'='*60}")
+        
+        for i, idx in enumerate(indices[:top_n], 1):
+            if idx < len(feature_names):
+                print(f"{i:2d}. {feature_names[idx]:50s} {importances[idx]:.6f}")
+    
     def save_model(self, output_dir='models'):
         """Save trained model and preprocessing objects."""
         import os
@@ -412,21 +406,21 @@ class PMCClassifier:
         # Include all_event_keys and scaler for inference
         model_data = {
             'model': self.model,
-            'scaler': self.feature_extractor.scaler,  # Single scaler (normalizes each column independently)
+            'scaler': self.feature_extractor.scaler,
             'num_events': self.feature_extractor.num_events,
             'num_features_per_event': self.feature_extractor.num_features_per_event,
             'label_encoder': self.feature_extractor.label_encoder,
             'feature_names': getattr(self, 'feature_names', None),
-            'all_event_keys': getattr(self, 'all_event_keys', None)  # CRITICAL for inference
+            'all_event_keys': getattr(self, 'all_event_keys', None)
         }
         
-        model_path = os.path.join(output_dir, 'pmc_classifier.pkl')
+        model_path = os.path.join(output_dir, 'pmc_xgboost.pkl')
         with open(model_path, 'wb') as f:
             pickle.dump(model_data, f)
         
         print(f"\n{'='*60}")
         print(f"Model saved to: {model_path}")
-        print(f"  - Trained model (LogisticRegression)")
+        print(f"  - Trained model (XGBoost)")
         print(f"  - Feature scaler (StandardScaler, per-column normalization)")
         print(f"  - Label encoder ({len(self.feature_extractor.label_encoder.classes_)} classes)")
         print(f"  - Feature names ({len(model_data['feature_names']) if model_data['feature_names'] else 0} features)")
@@ -438,7 +432,7 @@ class PMCClassifier:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Train logistic regression classifier on PMC features'
+        description='Train XGBoost classifier on PMC features'
     )
     parser.add_argument(
         '--features',
@@ -461,6 +455,24 @@ def main():
         help='Number of cross-validation folds (default: 5)'
     )
     parser.add_argument(
+        '--n-estimators',
+        type=int,
+        default=300,
+        help='Number of boosting rounds (default: 300)'
+    )
+    parser.add_argument(
+        '--max-depth',
+        type=int,
+        default=6,
+        help='Maximum tree depth (default: 6)'
+    )
+    parser.add_argument(
+        '--learning-rate',
+        type=float,
+        default=0.1,
+        help='Learning rate (default: 0.1)'
+    )
+    parser.add_argument(
         '--no-split',
         action='store_true',
         help='Skip train/test split, only do cross-validation'
@@ -479,7 +491,7 @@ def main():
     args = parser.parse_args()
     
     print(f"{'='*60}")
-    print(f"PMC Logistic Regression Classifier")
+    print(f"PMC XGBoost Classifier")
     print(f"{'='*60}")
     print(f"Features file: {args.features}")
     
@@ -524,15 +536,19 @@ def main():
         return 1
     
     # Encode labels
-    y_encoded = extractor.label_encoder.fit_transform(y) # Convert string labels to integer IDs
-    label_names = extractor.label_encoder.classes_ # fit_transform does sorting. so label_names is the sorted list of workload labels
+    y_encoded = extractor.label_encoder.fit_transform(y)
+    label_names = extractor.label_encoder.classes_
     
     print(f"\n{'='*60}")
     print(f"Feature Normalization (StandardScaler)")
     print(f"{'='*60}")
     
     # Initialize classifier
-    classifier = PMCClassifier()
+    classifier = XGBoostClassifier(
+        n_estimators=args.n_estimators,
+        max_depth=args.max_depth,
+        learning_rate=args.learning_rate
+    )
     classifier.feature_extractor = extractor
     
     if args.no_split or len(X) < 5:
@@ -559,7 +575,6 @@ def main():
             classifier.cross_validate(X_scaled, y_encoded, cv=cv_folds)
     else:
         # Train/test split
-        # X has all the features for all the workloads (one long feature vector for each workload)
         X_train, X_test, y_train, y_test = train_test_split(
             X, y_encoded, 
             test_size=args.test_size, 
@@ -570,28 +585,18 @@ def main():
         print(f"Train/test split: {len(X_train)}/{len(X_test)}")
         
         # Normalize features
-
-        # X_train contains e.g. 10 runs for 14 workloads. And we take 80 percent of them 
-        # X_train[0:9] contains 10 runs for the first workload.
-        # X_train[0][0:9] contains 10 features
-        print("X_train.shape: ", X_train.shape)
-        print("len(X_train): ", len(X_train))
-        print("y_train shape: ", len(y_train))
-        print("X_train[0] shape: ", len(X_train[0]))
-        
         X_train_scaled, X_test_scaled = extractor.normalize_features(X_train, X_test)
         
         print(f"Features normalized to zero mean, unit variance")
-        # axis=0 is per column
-        print(f"  Mean (before): {X_train.mean(axis=0)[:3]} ...")
-        print(f"  Mean (after):  {X_train_scaled.mean(axis=0)[:3]} ...")
-        print(f"  Std (before):  {X_train.std(axis=0)[:3]} ...")
-        print(f"  Std (after):   {X_train_scaled.std(axis=0)[:3]} ...")
+        
         # Train classifier
         classifier.train(X_train_scaled, y_train)
         
         # Evaluate on test set
         classifier.evaluate(X_test_scaled, y_test, label_names=label_names)
+        
+        # Show feature importance
+        classifier.show_feature_importance(feature_names, top_n=20)
         
         # Cross-validation on full dataset (if we have enough samples)
         X_full_scaled = extractor.normalize_features(X)
@@ -604,24 +609,11 @@ def main():
             print(f"Skipping cross-validation (need at least 2 samples per class)")
             print(f"{'='*60}")
     
-    print(f"\n{'='*60}")
-    print(f"Top 10 Most Important Features (by coefficient magnitude)")
-    print(f"{'='*60}")
-    
-    # Show feature importance (coefficient magnitudes)
-    if hasattr(classifier.model, 'coef_'):
-        coef_magnitudes = np.abs(classifier.model.coef_).mean(axis=0)
-        top_indices = np.argsort(coef_magnitudes)[-10:][::-1]
-        
-        for i, idx in enumerate(top_indices, 1):
-            if idx < len(feature_names):
-                print(f"{i:2d}. {feature_names[idx]:50s} {coef_magnitudes[idx]:.6f}")
-    
     # Save model if requested
     if args.save_model:
         # Store feature names and event keys in classifier for inference
         classifier.feature_names = feature_names
-        classifier.all_event_keys = all_event_keys_sorted  # Save the event keys used in training
+        classifier.all_event_keys = all_event_keys_sorted
         classifier.save_model(args.model_dir)
     
     print(f"\nDone!")
@@ -629,6 +621,5 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())
 
