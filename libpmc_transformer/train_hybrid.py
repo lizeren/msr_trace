@@ -27,7 +27,7 @@ from sklearn.metrics import classification_report, accuracy_score
 class HybridTransformer(nn.Module):
     """Transformer on statistical features."""
     
-    def __init__(self, num_classes=31, num_events=38, num_features=10, 
+    def __init__(self, num_classes=31, num_events=38, num_features=16, 
                  d_model=128, nhead=8, num_layers=4, dropout=0.3):
         super().__init__()
         
@@ -261,7 +261,7 @@ def main():
     print(f"Train: {len(train_samples)} | Val: {len(val_samples)} | Test: {len(test_samples)}")
     
     # Normalize features
-    train_arr = np.array(train_samples).reshape(-1, 10)
+    train_arr = np.array(train_samples).reshape(-1, 16)
     mean = np.mean(train_arr, axis=0)
     std = np.std(train_arr, axis=0) + 1e-8
     
@@ -282,7 +282,7 @@ def main():
     model = HybridTransformer(
         num_classes=train_dataset.num_classes,
         num_events=38,
-        num_features=10,
+        num_features=11,
         d_model=args.d_model,
         nhead=args.nhead,
         num_layers=args.num_layers,
@@ -290,7 +290,7 @@ def main():
     ).to(device)
     
     print(f"\nHybrid Transformer (statistical features)")
-    print(f"Input: [38 events, 10 features] -> learns cross-event patterns")
+    print(f"Input: [38 events, 11 features (incl. total_count_mean)] -> learns cross-event patterns")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)

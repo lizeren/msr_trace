@@ -19,13 +19,13 @@ from sklearn.metrics import classification_report, accuracy_score
 
 
 class HybridCNN(nn.Module):
-    """CNN on statistical features [38, 10] instead of temporal sequences."""
+    """CNN on statistical features [38, 16] instead of temporal sequences."""
     
     def __init__(self, num_classes=31, dropout=0.4):
         super().__init__()
         
-        # Input: [batch, 38, 10]
-        # Treat 38 as "channels" and 10 as "sequence length"
+        # Input: [batch, 38, 16]
+        # Treat 38 as "channels" and 16 as "sequence length"
         
         # Conv layers
         self.conv1 = nn.Conv1d(38, 64, kernel_size=3, padding=1)
@@ -45,9 +45,9 @@ class HybridCNN(nn.Module):
         self.bn_fc1 = nn.BatchNorm1d(128)
         self.dropout = nn.Dropout(dropout)
         self.fc2 = nn.Linear(128, num_classes)
-        
+    
     def forward(self, x):
-        # x: [batch, 38, 10]
+        # x: [batch, 38, 16]
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))
@@ -241,7 +241,7 @@ def main():
     print(f"Train: {len(train_samples)} | Val: {len(val_samples)} | Test: {len(test_samples)}")
     
     # Normalize
-    train_arr = np.array(train_samples).reshape(-1, 10)
+    train_arr = np.array(train_samples).reshape(-1, 11)
     mean = np.mean(train_arr, axis=0)
     std = np.std(train_arr, axis=0) + 1e-8
     
@@ -261,7 +261,7 @@ def main():
     # Model
     model = HybridCNN(num_classes=train_dataset.num_classes, dropout=args.dropout).to(device)
     print(f"\nHybrid CNN (statistical features)")
-    print(f"Input: [38 events, 10 features]")
+    print(f"Input: [38 events, 16 features (6 from stats + 10 from timestamps)]")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)

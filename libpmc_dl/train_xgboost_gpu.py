@@ -83,15 +83,29 @@ def load_data(features_pattern: str) -> Tuple[np.ndarray, List[str]]:
                 timestamps = event_data.get('timestamps_ns', [])
                 sampling_period = event_data.get('sampling_period', 100)
                 
-                # Compute stats
-                stats = compute_statistical_features(timestamps, sampling_period)
-                event_features.extend(stats)  # Flatten: 38 events * 10 features = 380 features
+                # Get all stats
+                stats_dict = event_data.get('stats', {})
+                total_count_mean = stats_dict.get('total_count_mean', 0.0)
+                total_count_std = stats_dict.get('total_count_std', 0.0)
+                duration_mean_ns = stats_dict.get('duration_mean_ns', 0.0)
+                duration_std_ns = stats_dict.get('duration_std_ns', 0.0)
+                num_samples_mean = stats_dict.get('num_samples_mean', 0.0)
+                num_samples_std = stats_dict.get('num_samples_std', 0.0)
+                
+                # Compute stats (16 features)
+                stats = compute_statistical_features(
+                    timestamps, sampling_period,
+                    total_count_mean, total_count_std,
+                    duration_mean_ns, duration_std_ns,
+                    num_samples_mean, num_samples_std
+                )
+                event_features.extend(stats)  # Flatten: 38 events * 16 features = 608 features
             
             # Ensure exactly 38 events (pad if needed)
-            while len(event_features) < 380:  # 38 * 10
-                event_features.extend(np.zeros(10, dtype=np.float32))
+            while len(event_features) < 608:  # 38 * 16
+                event_features.extend(np.zeros(16, dtype=np.float32))
             
-            samples.append(np.array(event_features[:380], dtype=np.float32))
+            samples.append(np.array(event_features[:608], dtype=np.float32))
             labels.append(workload_label)
     
     print(f"Loaded {len(samples)} samples with {len(samples[0])} features each")
