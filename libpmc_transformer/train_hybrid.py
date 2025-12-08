@@ -125,8 +125,12 @@ def load_data_with_stats(features_pattern: str, seq_len: int = 128):
         if file_idx % 200 == 0:
             print(f"  Progress: {file_idx}/{len(files)} files...")
         
-        with open(file_path, 'r') as f:
-            data = json.load(f)
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"  Warning: Skipping corrupted file: {file_path}")
+            continue
         
         for workload_label, events in data.items():
             # Process into statistical features
@@ -218,6 +222,8 @@ def main():
     parser.add_argument('--num-layers', type=int, default=4)
     parser.add_argument('--dropout', type=float, default=0.3)
     parser.add_argument('--save-model', action='store_true')
+    parser.add_argument('--cache', action='store_true',
+                        help='Use pre-computed cached features from ../libpmc_dl/features_10/')
     
     args = parser.parse_args()
     
@@ -225,7 +231,24 @@ def main():
     print(f"Device: {device}")
     
     # Load data with statistical features
-    samples, labels = load_data_with_stats(args.features)
+    if args.cache:
+        print("\n📦 Loading cached features...")
+        cache_file = '../libpmc_dl/features_10/features_cache.pkl'
+        if not os.path.exists(cache_file):
+            print(f"❌ Cache file not found: {cache_file}")
+            print(f"   Run: cd ../libpmc_dl && python3 preprocess_features.py")
+            return 1
+        
+        import pickle
+        with open(cache_file, 'rb') as f:
+            cache_data = pickle.load(f)
+        
+        # Cache contains [N, 38, 10] - exactly what we need!
+        samples = [cache_data['X'][i] for i in range(len(cache_data['X']))]
+        labels = cache_data['y'].tolist()
+        print(f"✓ Loaded {len(samples)} samples from cache (shape: [{len(samples)}, 38, 10])")
+    else:
+        samples, labels = load_data_with_stats(args.features)
     
     # Split
     train_samples, temp_samples, train_labels, temp_labels = train_test_split(
