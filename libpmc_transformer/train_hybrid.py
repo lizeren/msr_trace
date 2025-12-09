@@ -243,10 +243,10 @@ def main():
         with open(cache_file, 'rb') as f:
             cache_data = pickle.load(f)
         
-        # Cache contains [N, 38, 10] - exactly what we need!
+        # Cache contains [N, 38, 16] - exactly what we need!
         samples = [cache_data['X'][i] for i in range(len(cache_data['X']))]
         labels = cache_data['y'].tolist()
-        print(f"✓ Loaded {len(samples)} samples from cache (shape: [{len(samples)}, 38, 10])")
+        print(f"✓ Loaded {len(samples)} samples from cache (shape: [{len(samples)}, 38, 16])")
     else:
         samples, labels = load_data_with_stats(args.features)
     
@@ -260,8 +260,11 @@ def main():
     
     print(f"Train: {len(train_samples)} | Val: {len(val_samples)} | Test: {len(test_samples)}")
     
-    # Normalize features
-    train_arr = np.array(train_samples).reshape(-1, 16)
+    # Normalize features (dynamically detect number of features from data)
+    num_features = train_samples[0].shape[1] if len(train_samples[0].shape) > 1 else 16
+    print(f"Detected {num_features} features per event")
+    
+    train_arr = np.array(train_samples).reshape(-1, num_features)
     mean = np.mean(train_arr, axis=0)
     std = np.std(train_arr, axis=0) + 1e-8
     
@@ -282,7 +285,7 @@ def main():
     model = HybridTransformer(
         num_classes=train_dataset.num_classes,
         num_events=38,
-        num_features=11,
+        num_features=num_features,
         d_model=args.d_model,
         nhead=args.nhead,
         num_layers=args.num_layers,

@@ -475,46 +475,93 @@ def main():
         default='models',
         help='Directory to save model (default: models)'
     )
+    parser.add_argument(
+        '--cache',
+        action='store_true',
+        help='Load from cached features (libpmc_dl/features_10/features_cache.pkl)'
+    )
     
     args = parser.parse_args()
     
     print(f"{'='*60}")
     print(f"PMC Logistic Regression Classifier")
     print(f"{'='*60}")
-    print(f"Features file: {args.features}")
     
     # Initialize feature extractor
     extractor = PMCFeatureExtractor(args.features)
     
-    # Load and build feature matrix
-    print(f"\nLoading features...")
-    pmc_data = extractor.load_features()
-    
-    if isinstance(pmc_data, list):
-        # Multiple files
-        num_files = len(pmc_data)
-        # Count unique workloads across all files
-        unique_workloads = set()
-        for _, data in pmc_data:
-            unique_workloads.update(data.keys())
-        print(f"  Loaded {num_files} files with {len(unique_workloads)} unique workloads")
+    # Load features (from cache or JSON)
+    if args.cache:
+        print(f"Loading from cache...")
+        cache_file = '../libpmc_dl/features_10/features_cache.pkl'
+        
+        import os
+        if not os.path.exists(cache_file):
+            print(f"❌ Cache file not found: {cache_file}")
+            print(f"   Run: cd ../libpmc_dl && python3 preprocess_features.py")
+            return 1
+        
+        with open(cache_file, 'rb') as f:
+            cache_data = pickle.load(f)
+        
+        # Cache contains [N, 38, num_features]
+        X_raw = cache_data['X']  # Shape: [N, 38, num_features]
+        y = cache_data['y']
+        num_features = cache_data['num_features']
+        
+        # Flatten to [N, 38*num_features] for logistic regression
+        X = X_raw.reshape(len(X_raw), -1)
+        
+        print(f"✓ Loaded {len(X)} samples from cache")
+        print(f"  Shape: {X_raw.shape} -> {X.shape}")
+        print(f"  Features per event: {num_features}")
+        print(f"  Total features: {X.shape[1]}")
+        
+        # Create feature names from cache
+        feature_names = []
+        for event_idx in range(38):
+            for feat_name in cache_data['feature_names']:
+                feature_names.append(f"event_{event_idx}_{feat_name}")
+        
+        workload_names = y.tolist()
+        all_event_keys_sorted = [f"event_{i}" for i in range(38)]
+        
+        # Update extractor settings
+        extractor.num_features_per_event = num_features
+        extractor.num_events = 38
+        
     else:
-        # Single file
-        print(f"  Found {len(pmc_data)} workloads in single file")
+        print(f"Features file: {args.features}")
+        print(f"\nLoading features...")
+        pmc_data = extractor.load_features()
+        if isinstance(pmc_data, list):
+            # Multiple files
+            num_files = len(pmc_data)
+            # Count unique workloads across all files
+            unique_workloads = set()
+            for _, data in pmc_data:
+                unique_workloads.update(data.keys())
+            print(f"  Loaded {num_files} files with {len(unique_workloads)} unique workloads")
+        else:
+            # Single file
+            print(f"  Found {len(pmc_data)} workloads in single file")
+        
+        print(f"\nExtracting feature matrix...")
+        X, y, feature_names, workload_names, all_event_keys_sorted = extractor.build_feature_matrix(pmc_data)
+        print(f"\n{'='*60}")
+        print(f"  Feature matrix shape: {X.shape}")
+        print(f"  Total features: {len(feature_names)}")
+        print(f"  Total samples: {len(X)}")
+        print(f"  Unique classes: {len(np.unique(y))}")
     
-    print(f"\nExtracting feature matrix...")
-    X, y, feature_names, workload_names, all_event_keys_sorted = extractor.build_feature_matrix(pmc_data)
-    print(f"\n{'='*60}")
-    print(f"  Feature matrix shape: {X.shape}")
-    print(f"  Total features: {len(feature_names)}")
-    print(f"  Total samples: {len(X)}")
-    print(f"  Unique classes: {len(np.unique(y))}")
-    
-    # Show samples per class
-    print(f"\n  Samples per class:")
-    unique_labels, counts = np.unique(y, return_counts=True)
-    for label, count in zip(unique_labels, counts):
-        print(f"    {label}: {count} samples")
+    # Show samples per class (only if not from cache, to avoid clutter)
+    if not args.cache:
+        print(f"\n  Samples per class:")
+        unique_labels, counts = np.unique(y, return_counts=True)
+        for label, count in zip(unique_labels, counts):
+            print(f"    {label}: {count} samples")
+    else:
+        print(f"\n  Unique classes: {len(np.unique(y))}")
     print(f"{'='*60}")
     
     # Check if we have enough samples
