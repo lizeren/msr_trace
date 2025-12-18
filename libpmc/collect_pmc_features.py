@@ -9,6 +9,9 @@ Automatically reads events from pmc_events.csv and measures them individually.
 
 Usage:
     python3 collect_pmc_features.py --target ./example_cache_call --runs 5 --total 2
+    python3 collect_pmc_features.py --target "./program arg1 arg2" --runs 5
+    python3 collect_pmc_features.py --target ./http_server --runs 5 --total 10 --name http
+    python3 collect_pmc_features.py --target ./http_server --runs 5 --total 8 --name http --start 11
 """
 
 import json
@@ -18,6 +21,7 @@ import sys
 import argparse
 import csv
 import numpy as np
+import shlex
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -26,15 +30,19 @@ class PMCTemporalCollector:
     def __init__(self, target_binary: str, csv_file: str = "pmc_events.csv", 
                  output_json: str = "pmc_features.json",
                  pmc_output: str = "pmc_results.json"):
-        self.target_binary = target_binary
+        # Parse target command (binary + arguments)
+        # Example: "./example_cache_call arg1 arg2" -> ["./example_cache_call", "arg1", "arg2"]
+        self.target_command = shlex.split(target_binary)
+        self.target_binary_path = self.target_command[0]  # Just the binary path
+        
         self.csv_file = csv_file
         self.output_json = output_json
         self.pmc_output = pmc_output
         self.feature_db = {}
         
-        # Verify target exists
-        if not os.path.exists(target_binary):
-            raise FileNotFoundError(f"Target binary not found: {target_binary}")
+        # Verify target binary exists
+        if not os.path.exists(self.target_binary_path):
+            raise FileNotFoundError(f"Target binary not found: {self.target_binary_path}")
         
         # Verify CSV exists
         if not os.path.exists(csv_file):
@@ -43,6 +51,10 @@ class PMCTemporalCollector:
         # Cache event name to index mapping (optimization: read CSV only once)
         self.event_name_map = self.build_event_name_to_index_map()
         print(f"✓ Cached {len(self.event_name_map)} event mappings from {csv_file}")
+        
+        # Print command info if arguments are present
+        if len(self.target_command) > 1:
+            print(f"✓ Target command: {self.target_binary_path} with {len(self.target_command) - 1} argument(s)")
     
     def read_event_indices_from_csv(self) -> List[int]:
         """Read a CSV file and returns a list of integers taken from the "index" column of that file."""
@@ -98,7 +110,7 @@ class PMCTemporalCollector:
         event_str = ','.join(map(str, event_indices))
         print(f"\n{'='*60}")
         print(f"Collecting Events {event_str} for ALL workloads")
-        print(f"Target: {self.target_binary}")
+        print(f"Target: {' '.join(self.target_command)}")
         print(f"Runs: {num_runs}")
         print(f"{'='*60}")
         
@@ -124,10 +136,10 @@ class PMCTemporalCollector:
             env['PMC_EVENT_INDICES'] = event_str
             env['PMC_OUTPUT_FILE'] = self.pmc_output
             
-            # Run target program
+            # Run target program with arguments
             try:
                 result = subprocess.run(
-                    [self.target_binary],
+                    self.target_command,  # List: [binary, arg1, arg2, ...]
                     env=env,
                     capture_output=True,
                     text=True,
@@ -535,7 +547,7 @@ def main():
     - Single write at end = 5-10x faster than checkpoint approach
     - If script fails, only current iteration is lost
     
-    FINAL OUTPUT FILE STRUCTURE (each pmc_features_N.json):
+    FINAL OUTPUT FILE STRUCTURE (each pmc_features_N.json or pmc_features_NAME_N.json):
     {
       "RSA_encrypt": {
         "event_0": {temporal_data with averaged timestamps and stats},
@@ -547,6 +559,11 @@ def main():
         ...
       }
     }
+    
+    OUTPUT FILE NAMING:
+    - Without --name: pmc_features_1.json, pmc_features_2.json, ...
+    - With --name http: pmc_features_http_1.json, pmc_features_http_2.json, ...
+    - With --name rsa: pmc_features_rsa_1.json, pmc_features_rsa_2.json, ...
     """
     parser = argparse.ArgumentParser(
         description='Collect PMC temporal features for ML classification (measures 1 event at a time)',
@@ -555,34 +572,64 @@ def main():
 Example:
   # Collect all events from pmc_events.csv (1 event at a time)
   # Automatically extracts ALL workloads from the target program
-  # Deletes old results and builds complete pmc_features.json
   python3 collect_pmc_features.py --target ./example_cache_call --runs 5
   
   # Generate multiple feature files (pmc_features_1.json, pmc_features_2.json, etc.)
   python3 collect_pmc_features.py --target ./rsa_test --runs 5 --total 2
+  
+  # Descriptive naming (pmc_features_http_1.json, pmc_features_http_2.json, etc.)
+  python3 collect_pmc_features.py --target ./http_server --runs 5 --total 10 --name http
+  
+  # Continue collection from file #11 (generates http_11.json to http_18.json)
+  python3 collect_pmc_features.py --target ./http_server --runs 5 --total 8 --name http --start 11
+  
+  # Target binary with arguments (use quotes!)
+  python3 collect_pmc_features.py --target "./example_cache_call arg1 arg2" --runs 5
         """
     )
     
-    parser.add_argument('--target', required=True, help='Path to target binary')
+    parser.add_argument('--target', required=True, 
+                        help='Target binary with optional arguments (use quotes if args present, e.g., "./prog arg1 arg2")')
     parser.add_argument('--runs', type=int, default=5, help='Number of runs per event (default: 5)')
     parser.add_argument('--total', type=int, default=1, help='Number of complete feature collection iterations (default: 1)')
+    parser.add_argument('--name', type=str, default=None, 
+                        help='Optional descriptive name for output files (e.g., "http" -> pmc_features_http_1.json)')
+    parser.add_argument('--start', type=int, default=1, 
+                        help='Starting number for output files (default: 1). Use to continue collection (e.g., --start 11)')
     
     args = parser.parse_args()
     
     # Hardcoded defaults
     csv_file = 'pmc_events.csv'
     batch_size = 4 # collect 4 event at a time
+
+    # Cleanup: remove pmc_results.json
+    pmc_output = 'pmc_results.json'
+    if os.path.exists(pmc_output):
+        os.remove(pmc_output)
+        print(f"✓ Cleaned up {pmc_output}\n")
     
     # Loop for multiple iterations if --total is specified
     all_iterations_success = True
     
-    for iteration in range(1, args.total + 1):
+    # Calculate iteration range: from start to start+total-1
+    # Example: --start 3 --total 8 produces files 3,4,5,6,7,8,9,10
+    for iteration in range(args.start, args.start + args.total):
   
-        output_file = f'pmc_features_{iteration}.json'
+        # Generate output filename with optional descriptive name
+        # if args.name:
+        #     output_file = f'pmc_features_{args.name}_{iteration}.json'
+        # else:
+        #     output_file = f'pmc_features_{iteration}.json'
+        if args.name:
+            output_file = f'features/pmc_features_{args.name}_{iteration}.json'
+        else:
+            output_file = f'features/pmc_features_{iteration}.json'
         
+        iteration_num = iteration - args.start + 1  # Display: 1/8, 2/8, etc.
         print(f"\n{'*'*60}")
         print(f"{'*'*60}")
-        print(f"ITERATION {iteration}/{args.total}")
+        print(f"ITERATION {iteration_num}/{args.total} (File #{iteration})")
         print(f"Output file: {output_file}")
         print(f"{'*'*60}")
         print(f"{'*'*60}\n")
@@ -648,16 +695,16 @@ Example:
         # Save all collected data once at the end of iteration
         if success_count > 0:
             print(f"\n{'='*60}")
-            print(f"💾 Saving all {success_count} batches to {output_file}...")
+            print(f" Saving all {success_count} batches to {output_file}...")
             collector.save_features()
             print(f"{'='*60}")
         else:
-            print(f"\n⚠️  No successful batches to save")
+            print(f"\n  No successful batches to save")
 
         
         # Iteration summary
         print(f"\n{'='*60}")
-        print(f"Iteration {iteration} Complete!")
+        print(f"Iteration {iteration_num}/{args.total} Complete (File #{iteration})!")
         print(f"  Total events: {len(event_indices)}")
         print(f"  Successful batches: {success_count}/{total_batches}")
         print(f"  Output: {output_file}")
@@ -676,10 +723,21 @@ Example:
     print(f"\n{'='*60}")
     print(f"ALL ITERATIONS COMPLETE!")
     print(f"  Total iterations: {args.total}")
+    
+    end_num = args.start + args.total - 1
+    
     if args.total == 1:
-        print(f"  Output: pmc_features.json")
+        if args.name:
+            print(f"  Output: pmc_features_{args.name}_{args.start}.json")
+        else:
+            print(f"  Output: pmc_features_{args.start}.json")
     else:
-        print(f"  Output files: pmc_features_1.json to pmc_features_{args.total}.json")
+        if args.name:
+            print(f"  Output files: pmc_features_{args.name}_{args.start}.json to pmc_features_{args.name}_{end_num}.json")
+            print(f"  Pattern for training: \"pmc_features_{args.name}_*.json\"")
+        else:
+            print(f"  Output files: pmc_features_{args.start}.json to pmc_features_{end_num}.json")
+            print(f"  Pattern for training: \"pmc_features_*.json\"")
     print(f"{'='*60}\n")
     
     return 0 if all_iterations_success else 1
