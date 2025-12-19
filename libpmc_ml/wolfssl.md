@@ -20,6 +20,7 @@ to link against libpmc
 make clean
 ./configure LIBS="-L$PWD/testsuite -lpmc"
 make -j
+# IMPORTANT: you need to specify the libpmc path
 export LD_LIBRARY_PATH="$PWD/testsuite:$LD_LIBRARY_PATH"
 export PMC_EVENT_INDICES="0,1,2,3" && ./testsuite/testsuite.test
 #python collector
@@ -40,8 +41,35 @@ wolfcrypt/test/test.c
  #include "../../testsuite/pmc.h"
 ```
 
+## Functions
 
-
+`wc_Sha256Update`
+`wc_Sha256GetHash`
+`wc_Sha256Copy`
+`wc_ShaUpdate`
+`wc_ShaGetHash`
+`wc_ShaCopy`
+`wc_InitRng_ex`
+`wc_PRF`
+`wc_Tls13_HKDF_Extract`
+`wc_Tls13_HKDF_Expand_Label`
+`wc_Chacha_SetKey`
+`wc_Chacha_SetIV`
+`wc_Chacha_Process`
+`wc_AesSetKey`
+`wc_AesCbcEncrypt`
+`wc_InitRsaKey_ex`
+`wc_RsaPrivateKeyDecode`
+`wc_RsaSSL_Sign`
+`wc_InitDhKey`
+`wc_DhKeyDecode`
+`wc_InitRng_ex`
+`wc_DhGenerateKeyPair`
+`ecc_test_key_decode`
+`ecc_test_key_gen`
+`wc_PBKDF1_ex`
+`wc_PBKDF2_ex`
+`wc_PKCS12_PBKDF`
 ## If have trouble locate pmc_events.csv
 
 trick to find current work directory as libtool changes the working directory
