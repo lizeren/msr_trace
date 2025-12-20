@@ -24,7 +24,7 @@ make -j
 export LD_LIBRARY_PATH="$PWD/testsuite:$LD_LIBRARY_PATH"
 export PMC_EVENT_INDICES="0,1,2,3" && ./testsuite/testsuite.test
 #python collector
-python3 collect_pmc_features.py --target "./testsuite/testsuite.test" --runs 1 --total 1 --name wolfssl --start 1 > result.log
+python3 collect_pmc_features.py --target "./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 > result.log
 ```
 
 ## modification to wolfssl
@@ -63,7 +63,6 @@ wolfcrypt/test/test.c
 `wc_RsaSSL_Sign`
 `wc_InitDhKey`
 `wc_DhKeyDecode`
-`wc_InitRng_ex`
 `wc_DhGenerateKeyPair`
 `ecc_test_key_decode`
 `ecc_test_key_gen`
