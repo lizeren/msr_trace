@@ -370,7 +370,7 @@ def main():
     print(f"  Model: XGBoost")
     print(f"  Device: {'GPU (cuda:0)' if args.gpu else 'CPU'}")
     print(f"  Samples: {len(X)}")
-    print(f"  Features: {X.shape[1]} (38 events × 10 statistical features)")
+    print(f"  Features: {X.shape[1]} (38 events × 16 statistical features)")
     print(f"  Classes: {len(label_encoder.classes_)}")
     print(f"  Trees: {bst.best_iteration}")
     print(f"  Test Accuracy: {test_acc*100:.2f}%")

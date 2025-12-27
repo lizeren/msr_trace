@@ -11,6 +11,7 @@ make
 ### example_cache_call.c
 
 ```bash
+# specify what you want to measure out of pmc_events.csv
 PMC_EVENT_INDICES="0,1,2,3" ./example_cache_call 1000 
 ```
 

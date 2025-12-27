@@ -523,7 +523,7 @@ static int is_index_selected(int event_index, const int *selected_indices, size_
 // Load events from CSV file
 static int load_events_from_csv(const char *csv_path, 
                                 pmc_event_request_t **events_out,
-                                size_t *num_events_out) {
+                                size_t *num_events_out) {                       
     FILE *fp = fopen(csv_path, "r");
     if (!fp) {
         printf("ERROR: Failed to open CSV file: %s\n", csv_path);

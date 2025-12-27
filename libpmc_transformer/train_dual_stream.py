@@ -4,10 +4,16 @@ Dual-Stream Transformer: Uses BOTH statistical features AND timeseries data.
 
 Architecture:
 - Stream 1: Transformer processes timeseries [38 events, 128 timesteps]
-- Stream 2: Transformer processes statistical features [38 events, 10 features]
+- Stream 2: Transformer processes statistical features [38 events, 16 features]
 - Fusion: Combine both streams before classification
 
 This should capture both temporal patterns and statistical summaries.
+
+Features (16 total):
+Stats (1-6): total_count_mean, total_count_std, duration_mean_ns, 
+             duration_std_ns, num_samples_mean, num_samples_std
+Temporal (7-16): total_duration, mean_interval, std_interval, min_interval, max_interval,
+                 sample_rate, num_samples, q25, q50 (median), q75
 """
 
 import json
@@ -28,7 +34,7 @@ class DualStreamTransformer(nn.Module):
     """Dual-stream transformer: processes both timeseries and statistical features."""
     
     def __init__(self, num_classes=31, num_events=38, 
-                 seq_len=128, num_stat_features=10,
+                 seq_len=128, num_stat_features=16,
                  d_model=128, nhead=8, num_layers=3, dropout=0.3):
         super().__init__()
         
@@ -76,7 +82,7 @@ class DualStreamTransformer(nn.Module):
         
     def forward(self, timeseries, stats):
         # timeseries: [batch, 38, 128]
-        # stats: [batch, 38, 10]
+        # stats: [batch, 38, 16]
         
         # Stream 1: Process timeseries
         x_time = self.timeseries_proj(timeseries)  # [batch, 38, d_model]
@@ -104,7 +110,7 @@ class DualStreamDataset(Dataset):
     
     def __init__(self, timeseries_samples, stat_samples, labels):
         self.timeseries_samples = timeseries_samples  # [N, 38, 128]
-        self.stat_samples = stat_samples  # [N, 38, 10]
+        self.stat_samples = stat_samples  # [N, 38, 16]
         self.label_encoder = LabelEncoder()
         self.labels_encoded = self.label_encoder.fit_transform(labels)
         self.num_classes = len(self.label_encoder.classes_)
@@ -120,34 +126,57 @@ class DualStreamDataset(Dataset):
         )
 
 
-def compute_statistical_features(timestamps: List[int], sampling_period: int) -> np.ndarray:
+def compute_statistical_features(timestamps: List[int], sampling_period: int,
+                                total_count_mean: float = 0.0,
+                                total_count_std: float = 0.0,
+                                duration_mean_ns: float = 0.0,
+                                duration_std_ns: float = 0.0,
+                                num_samples_mean: float = 0.0,
+                                num_samples_std: float = 0.0) -> np.ndarray:
     """
-    Compute 10 statistical features on timestamp intervals.
+    Compute 16 statistical features: 6 from stats + 10 from timestamp intervals.
     
-    Features:
-    1. total_duration, 2. mean_interval, 3. std_interval, 4. min_interval, 5. max_interval
-    6. sample_rate, 7. num_samples, 8. q25, 9. q50 (median), 10. q75
+    Features from stats (1-6):
+    1. total_count_mean, 2. total_count_std, 3. duration_mean_ns, 
+    4. duration_std_ns, 5. num_samples_mean, 6. num_samples_std
+    
+    Features from timestamps (7-16):
+    7. total_duration, 8. mean_interval, 9. std_interval, 10. min_interval, 11. max_interval
+    12. sample_rate, 13. num_samples, 14. q25, 15. q50 (median), 16. q75
     """
+    # Features 1-6: From stats (always available)
+    features = [
+        total_count_mean,
+        total_count_std,
+        duration_mean_ns,
+        duration_std_ns,
+        num_samples_mean,
+        num_samples_std
+    ]
+    
     if len(timestamps) < 2:
-        return np.zeros(10, dtype=np.float32)
+        features.extend([0.0] * 10)
+        return np.array(features, dtype=np.float32)
     
     intervals = np.diff(timestamps)
     
     if len(intervals) == 0 or np.all(intervals == 0):
-        return np.zeros(10, dtype=np.float32)
+        features.extend([0.0] * 10)
+        return np.array(features, dtype=np.float32)
     
-    features = [
-        timestamps[-1] - timestamps[0],  # 0: total_duration
-        np.mean(intervals),              # 1: mean_interval
-        np.std(intervals),               # 2: std_interval
-        np.min(intervals),               # 3: min_interval
-        np.max(intervals),               # 4: max_interval
-        len(timestamps) / (timestamps[-1] - timestamps[0] + 1),  # 5: sample_rate
-        len(timestamps),                 # 6: num_samples
-        np.percentile(intervals, 25),    # 7: q25
-        np.percentile(intervals, 50),    # 8: q50 (median)
-        np.percentile(intervals, 75),    # 9: q75
-    ]
+    # Temporal features (7-16)
+    features.extend([
+        timestamps[-1] - timestamps[0],  # 7: total_duration
+        np.mean(intervals),              # 8: mean_interval
+        np.std(intervals),               # 9: std_interval
+        np.min(intervals),               # 10: min_interval
+        np.max(intervals),               # 11: max_interval
+        len(timestamps) / (timestamps[-1] - timestamps[0] + 1),  # 12: sample_rate
+        len(timestamps),                 # 13: num_samples
+        np.percentile(intervals, 25),    # 14: q25
+        np.percentile(intervals, 50),    # 15: q50 (median)
+        np.percentile(intervals, 75),    # 16: q75
+    ])
     
     return np.array(features, dtype=np.float32)
 
@@ -215,17 +244,28 @@ def load_dual_data(features_pattern: str, seq_len: int = 128) -> Tuple[List, Lis
                 timeseries_seq = timestamps_to_sequence(timestamps, sampling_period, seq_len)
                 timeseries_features.append(timeseries_seq)
                 
-                # Create statistical features
-                stats = compute_statistical_features(timestamps, sampling_period)
+                # Get stats from JSON
+                stats_dict = event_data.get('stats', {})
+                
+                # Create statistical features (16 features)
+                stats = compute_statistical_features(
+                    timestamps, sampling_period,
+                    stats_dict.get('total_count_mean', 0.0),
+                    stats_dict.get('total_count_std', 0.0),
+                    stats_dict.get('duration_mean_ns', 0.0),
+                    stats_dict.get('duration_std_ns', 0.0),
+                    stats_dict.get('num_samples_mean', 0.0),
+                    stats_dict.get('num_samples_std', 0.0)
+                )
                 stat_features.append(stats)
             
             # Pad to 38 events
             while len(timeseries_features) < 38:
                 timeseries_features.append(np.zeros(seq_len, dtype=np.float32))
-                stat_features.append(np.zeros(10, dtype=np.float32))
+                stat_features.append(np.zeros(16, dtype=np.float32))
             
             timeseries_samples.append(np.array(timeseries_features[:38]))  # [38, seq_len]
-            stat_samples.append(np.array(stat_features[:38]))  # [38, 10]
+            stat_samples.append(np.array(stat_features[:38]))  # [38, 16]
             labels.append(workload_label)
     
     print(f"Loaded {len(timeseries_samples)} samples")
@@ -315,29 +355,55 @@ def main():
     print(f"Timeseries sequence length: {args.seq_len}")
     
     # Load data
+    import pickle
+    
     if args.cache:
         print("\n📦 Loading cached features...")
-        cache_file = '../libpmc_dl/features_10/features_cache.pkl'
-        if not os.path.exists(cache_file):
-            print(f"❌ Cache file not found: {cache_file}")
+        
+        # Check for dual-stream cache first (includes both timeseries and stats)
+        dual_cache_file = f'../libpmc_dl/features_10/dual_stream_cache_seq{args.seq_len}.pkl'
+        stats_cache_file = '../libpmc_dl/features_10/features_cache.pkl'
+        
+        if os.path.exists(dual_cache_file):
+            # Load pre-computed dual-stream cache
+            print(f"  Loading dual-stream cache: {dual_cache_file}")
+            with open(dual_cache_file, 'rb') as f:
+                dual_cache = pickle.load(f)
+            
+            timeseries_samples = [dual_cache['timeseries'][i] for i in range(len(dual_cache['timeseries']))]
+            stat_samples = [dual_cache['stats'][i] for i in range(len(dual_cache['stats']))]
+            labels = dual_cache['labels'].tolist() if hasattr(dual_cache['labels'], 'tolist') else list(dual_cache['labels'])
+            
+            print(f"✓ Loaded {len(timeseries_samples)} samples from dual-stream cache")
+            print(f"  Timeseries: [{len(timeseries_samples)}, 38, {args.seq_len}]")
+            print(f"  Stats: [{len(stat_samples)}, 38, 16]")
+        
+        elif os.path.exists(stats_cache_file):
+            # Stats cache exists but no dual-stream cache - need to create it
+            print(f"  Stats cache found, but no dual-stream cache.")
+            print(f"  Loading JSON to compute timeseries (one-time operation)...")
+            
+            timeseries_samples, stat_samples, labels = load_dual_data(args.features, seq_len=args.seq_len)
+            
+            # Save dual-stream cache for next time
+            print(f"\n💾 Saving dual-stream cache for faster loading next time...")
+            os.makedirs(os.path.dirname(dual_cache_file), exist_ok=True)
+            dual_cache = {
+                'timeseries': np.array(timeseries_samples, dtype=np.float32),
+                'stats': np.array(stat_samples, dtype=np.float32),
+                'labels': np.array(labels),
+                'seq_len': args.seq_len
+            }
+            with open(dual_cache_file, 'wb') as f:
+                pickle.dump(dual_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+            
+            file_size_mb = os.path.getsize(dual_cache_file) / (1024 * 1024)
+            print(f"  ✓ Saved to: {dual_cache_file} ({file_size_mb:.1f} MB)")
+        
+        else:
+            print(f"❌ Cache file not found: {stats_cache_file}")
             print(f"   Run: cd ../libpmc_dl && python3 preprocess_features.py")
             return 1
-        
-        import pickle
-        with open(cache_file, 'rb') as f:
-            cache_data = pickle.load(f)
-        
-        # Cache contains [N, 38, 10] statistical features
-        # We need to create timeseries data from original JSON files
-        print("⚠️  Note: Cache only contains statistical features.")
-        print("   Loading JSON for timeseries data...")
-        timeseries_samples, stat_samples_from_json, labels = load_dual_data(args.features, seq_len=args.seq_len)
-        
-        # Use cached stats but loaded timeseries
-        stat_samples = cache_data['X']  # [N, 38, 10]
-        print(f"✓ Loaded {len(stat_samples)} samples")
-        print(f"  Stats from cache: {stat_samples.shape}")
-        print(f"  Timeseries computed: {len(timeseries_samples)} samples")
     else:
         timeseries_samples, stat_samples, labels = load_dual_data(args.features, seq_len=args.seq_len)
     
@@ -376,7 +442,7 @@ def main():
     test_timeseries = [(s - time_mean) / time_std for s in test_timeseries]
     
     # Normalize stats
-    train_stats_arr = np.array(train_stats).reshape(-1, 10)
+    train_stats_arr = np.array(train_stats).reshape(-1, 16)
     stats_mean = np.mean(train_stats_arr, axis=0)
     stats_std = np.std(train_stats_arr, axis=0) + 1e-8
     
@@ -398,7 +464,7 @@ def main():
         num_classes=train_dataset.num_classes,
         num_events=38,
         seq_len=args.seq_len,
-        num_stat_features=10,
+        num_stat_features=16,
         d_model=args.d_model,
         nhead=args.nhead,
         num_layers=args.num_layers,
@@ -407,7 +473,7 @@ def main():
     
     print(f"\nDual-Stream Transformer")
     print(f"Stream 1: Timeseries [38 events, {args.seq_len} timesteps]")
-    print(f"Stream 2: Statistical [38 events, 10 features]")
+    print(f"Stream 2: Statistical [38 events, 16 features]")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     # Loss function with optional class weighting
