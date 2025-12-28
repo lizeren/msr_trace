@@ -10,6 +10,12 @@ API list: https://docs.openssl.org/3.3/man3/RSA_public_encrypt/#description
 
 I put libpmc and pmc.h in the root directory of openssl. pmc_events.csv in the same directory as test files.
 
+libpmc.so: openssl/libpmc.so
+pmc.h: openssl/pmc.h
+collect_pmc_features.py: openssl/test/collect_pmc_features.py
+pmc_events.csv: openssl/test/pmc_events.csv
+
+
 #### test program provided by openssl
 
 1. test/rsa_test.c
@@ -19,10 +25,14 @@ To build and run wrapped rsa_test.c
 ```bash
 # at root directory of openssl
 make test/rsa_test EX_LIBS="-L.. -lpmc -ldl -pthread"
-# at directory of test files
-export PMC_EVENT_INDICES="0,1,2,3" && ./rsa_test
 #python collector to run test/rsa_test.c 5 times and save the average results
 python3 collect_pmc_features.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 > result.log
+
+# ================================
+# below are commands for testing purposes. I don't think you will need them.
+# =================================
+# at directory of test files
+export PMC_EVENT_INDICES="0,1,2,3" && ./rsa_test
 #train classifier
 python3 train_classifier.py --features "features/pmc_features_*.json" > logistic.log
 #xgboost classifier
@@ -60,7 +70,7 @@ API functions that are wrapped:
 make test/http_test EX_LIBS="-L.. -lpmc -ldl -pthread"
 ./test/http_test test/certs/ca-cert.pem
 # at directory of test files
-python3 collect_pmc_features.py --target "./http_test certs/ca-cert.pem" --runs 5 --total 10 --name http --start 1> result.log
+python3 collect_pmc_features.py --target "./http_test certs/ca-cert.pem" --runs 5 --total 10 --name http --start 1 > result.log
 
 ```
 
@@ -80,7 +90,7 @@ python3 collect_pmc_features.py --target "./http_test certs/ca-cert.pem" --runs 
 make test/slh_dsa_test EX_LIBS="-L.. -lpmc -ldl -pthread"
 ./test/slh_dsa_test 
 # at directory of test files
-python3 collect_pmc_features.py --target "./slh_dsa_test" --runs 5 --total 10 --name slh_dsa --start 1> result.log
+python3 collect_pmc_features.py --target "./slh_dsa_test" --runs 5 --total 10 --name slh_dsa --start 1 > result.log
 ```
 
 `EVP_PKEY_CTX_new_from_name`

@@ -14,6 +14,13 @@ make -j
 ./testsuite/testsuite.test
 ```
 
+place to put libpmc.so, pmc.h, collect_pmc_features.py and pmc_events.csv
+
+libpmc.so: wolfssl/testsuite/libpmc.so
+pmc.h: wolfssl/testsuite/pmc.h
+collect_pmc_features.py: wolfssl/collect_pmc_features.py
+pmc_events.csv: wolfssl/pmc_events.csv
+
 to link against libpmc
 
 ```bash
