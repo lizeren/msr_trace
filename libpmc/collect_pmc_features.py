@@ -621,6 +621,9 @@ Example:
         #     output_file = f'pmc_features_{args.name}_{iteration}.json'
         # else:
         #     output_file = f'pmc_features_{iteration}.json'
+        # Create features directory if it doesn't exist
+        os.makedirs('features', exist_ok=True)
+        
         if args.name:
             output_file = f'features/pmc_features_{args.name}_{iteration}.json'
         else:
