@@ -258,7 +258,7 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.3)
     parser.add_argument('--save-model', action='store_true')
     parser.add_argument('--cache', action='store_true',
-                        help='Use pre-computed cached features from ../libpmc_dl/features_10/')
+                        help='Use pre-computed cached features from ../libpmc_dl/features_16/')
     
     args = parser.parse_args()
     
@@ -268,7 +268,7 @@ def main():
     # Load data with statistical features
     if args.cache:
         print("\n📦 Loading cached features...")
-        cache_file = '../libpmc_dl/features_10/features_cache.pkl'
+        cache_file = '../libpmc_dl/features_16/features_cache.pkl'
         if not os.path.exists(cache_file):
             print(f"❌ Cache file not found: {cache_file}")
             print(f"   Run: cd ../libpmc_dl && python3 preprocess_features.py")

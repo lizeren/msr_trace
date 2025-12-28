@@ -304,7 +304,7 @@ def main():
     parser.add_argument('--class-weights', action='store_true', help='Use class weighting for imbalanced data')
     parser.add_argument('--save-model', action='store_true')
     parser.add_argument('--cache', action='store_true',
-                        help='Use pre-computed cached features from features_10/')
+                        help='Use pre-computed cached features from features_16/')
     
     args = parser.parse_args()
     
@@ -315,7 +315,7 @@ def main():
     # Load data
     if args.cache:
         print("\n📦 Loading cached features...")
-        cache_file = 'features_10/features_cache.pkl'
+        cache_file = 'features_16/features_cache.pkl'
         if not os.path.exists(cache_file):
             print(f"❌ Cache file not found: {cache_file}")
             print(f"   Run: python3 preprocess_features.py")

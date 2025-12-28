@@ -19,11 +19,11 @@ python3 train_dual_stream.py --save-model --cache
 ```
 
 **Note:** First run with `--cache` will load JSON files once to create the dual-stream cache.
-Subsequent runs will load instantly from cache (`dual_stream_cache_seq128.pkl`). This cache is different from the cache from libpmc_dl/features_10/features_cache.pkl.
+Subsequent runs will load instantly from cache (`dual_stream_cache_seq128.pkl`). This cache is different from the cache from libpmc_dl/features_16/features_cache.pkl.
 
 Optional arguments:
 - `--seq-len 128`: Set timeseries sequence length
 - `--epochs 50`: Number of training epochs
 - `--batch-size 64`: Batch size
 - `--lr 1e-4`: Learning rate
-- `--cache`: Use/create cached features in ../libpmc_dl/features_10/
+- `--cache`: Use/create cached features in ../libpmc_dl/features_16/

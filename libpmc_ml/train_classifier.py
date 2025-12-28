@@ -478,7 +478,7 @@ def main():
     parser.add_argument(
         '--cache',
         action='store_true',
-        help='Load from cached features (libpmc_dl/features_10/features_cache.pkl)'
+        help='Load from cached features (libpmc_dl/features_16/features_cache.pkl)'
     )
     
     args = parser.parse_args()
@@ -493,7 +493,7 @@ def main():
     # Load features (from cache or JSON)
     if args.cache:
         print(f"Loading from cache...")
-        cache_file = '../libpmc_dl/features_10/features_cache.pkl'
+        cache_file = '../libpmc_dl/features_16/features_cache.pkl'
         
         import os
         if not os.path.exists(cache_file):

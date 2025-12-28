@@ -75,7 +75,7 @@ def compute_statistical_features(timestamps: List[int], sampling_period: int,
     return np.array(features, dtype=np.float32)
 
 
-def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_10'):
+def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16'):
     """Load JSON features, compute statistics, and cache to disk."""
     
     files = sorted(glob.glob(features_pattern))
@@ -220,7 +220,7 @@ def main():
     parser = argparse.ArgumentParser(description='Preprocess and cache statistical features')
     parser.add_argument('--features', default='features/pmc_features_*.json',
                         help='Path pattern to JSON feature files')
-    parser.add_argument('--output', default='features_10',
+    parser.add_argument('--output', default='features_16',
                         help='Output directory for cached features')
     
     args = parser.parse_args()

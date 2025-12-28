@@ -346,7 +346,7 @@ def main():
     parser.add_argument('--class-weights', action='store_true', help='Use class weighting for imbalanced data')
     parser.add_argument('--save-model', action='store_true')
     parser.add_argument('--cache', action='store_true',
-                        help='Use pre-computed cached features from ../libpmc_dl/features_10/')
+                        help='Use pre-computed cached features from ../libpmc_dl/features_16/')
     
     args = parser.parse_args()
     
@@ -361,8 +361,8 @@ def main():
         print("\n📦 Loading cached features...")
         
         # Check for dual-stream cache first (includes both timeseries and stats)
-        dual_cache_file = f'../libpmc_dl/features_10/dual_stream_cache_seq{args.seq_len}.pkl'
-        stats_cache_file = '../libpmc_dl/features_10/features_cache.pkl'
+        dual_cache_file = f'../libpmc_dl/features_16/dual_stream_cache_seq{args.seq_len}.pkl'
+        stats_cache_file = '../libpmc_dl/features_16/features_cache.pkl'
         
         if os.path.exists(dual_cache_file):
             # Load pre-computed dual-stream cache
