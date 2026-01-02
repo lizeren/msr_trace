@@ -19,7 +19,7 @@ place to put libpmc.so, pmc.h, collect_pmc_features.py and pmc_events.csv
 libpmc.so: wolfssl/testsuite/libpmc.so
 pmc.h: wolfssl/testsuite/pmc.h
 collect_pmc_features.py: wolfssl/collect_pmc_features.py
-pmc_events.csv: wolfssl/pmc_events.csv
+pmc_events.csv: wolfcrypt/test/pmc_events.csv (also change the function arguments of pmc_measure_begin_csv() in wolfcrypt/test/test.c to use the path of pmc_events.csv)
 
 to link against libpmc
 
