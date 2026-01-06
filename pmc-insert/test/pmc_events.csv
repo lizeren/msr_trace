@@ -1,6 +1,0 @@
-event_name,mode,sample_period
-PMC_EVENT_NEAR_CALL,sampling,10
-PMC_EVENT_L1_DCACHE_HIT,sampling,100
-PMC_EVENT_L1_DCACHE_MISS,sampling,10
-PMC_EVENT_CYCLES,counting,0
-
