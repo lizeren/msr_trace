@@ -24,5 +24,6 @@ export PMC_EVENT_INDICES="0,1,2,3"
 ### python collector
 
 ```bash
-python3 collect_pmc_features.py --target ./example_cache_call --runs 5 --total 2 > result.log
+python3 collect_pmc_features.py --target "./example_cache_call" --runs 5 --total 10 --name example_cache_call --start 1 > result.log
+
 ```

@@ -11,13 +11,24 @@ int addition(int a, int b) {
         return a * 2;
     }
 }
-
+int helper_func(int x) {
+    // Call addition from helper_func with branch
+    int result;
+    if (x > 0) {
+        result = addition(x, 10);
+    } else {
+        result = addition(x, -10);
+    }
+    return result;
+}
 int subtraction(int a, int b) {
     // Conditional branch
     int result = a - b;
     if (result < 0) {
         result = -result;
     }
+    addition(5, 3); // this shuold not be instrumented
+    helper_func(10); // this shuold not be instrumented too
     return result;
 }
 
@@ -34,56 +45,16 @@ int multiplication(int a, int b) {
     }
 }
 
-int helper_func(int x) {
-    // Call addition from helper_func with branch
-    int result;
-    if (x > 0) {
-        result = addition(x, 10);
-    } else {
-        result = addition(x, -10);
-    }
-    return result;
-}
+
 
 int main() {
     int a = 0;
-    // Test case 1: Expression statement
+
     addition(5, 3);
     
-    // Test case 2: Assignment statement
     a = subtraction(10, 5);
 
-    // Test case 3: Declaration initializer
-    int sum = addition(10, 20);
-    
-    // Test case 4: From helper function (not a target function)
-    int h = helper_func(7);
-    
-    // Test case 5: Multiple target functions in rows
-    subtraction(100, 50);
-    addition(1, 2);
-    multiplication(3, 4);
-    
-    // Add more branches
-    for (int i = 0; i < 10; i++) {
-        if (i % 2 == 0) {
-            addition(i, i + 1);
-        } else {
-            subtraction(i * 2, i);
-        }
-    }
-    
-    // Conditional based on previous results
-    if (sum > 20) {
-        multiplication(sum, 2);
-    } else {
-        subtraction(sum, 5);
-    }
-    
-    printf("Hello, World!\n");
-
-    // Return 0 for success (collect_pmc_features.py expects exit code 0)
-    addition(1, 2);  // Still call it for measurement
+    helper_func(10);
     return 0;
 }
 
