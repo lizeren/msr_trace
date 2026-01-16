@@ -29,6 +29,7 @@ to link against libpmc
 ```bash
 make clean
 ./configure LIBS="-L$PWD/testsuite -lpmc"
+
 make -j
 # IMPORTANT: you need to specify the libpmc path
 export LD_LIBRARY_PATH="$PWD/testsuite:$LD_LIBRARY_PATH"
@@ -43,12 +44,12 @@ python3 collect_pmc_features.py --target "./testsuite/testsuite.test" --runs 5 -
 
 ## debug
 ./configure \
-CFLAGS="-g -O0 -fPIC -fno-inline -Wno-error=maybe-uninitialized \
+CFLAGS="-g -Wno-error=maybe-uninitialized \
   -fplugin=./instrument_callsites_plugin.so \
+  -fdump-tree-all \
   -fplugin-arg-instrument_callsites_plugin-debug\
   -fplugin-arg-instrument_callsites_plugin-include-file-list=test.c \
   -fplugin-arg-instrument_callsites_plugin-include-function-list=wc_ShaCopy \
-  -fplugin-arg-instrument_callsites_plugin-include-file-list=/home/lizeren/Desktop/wolfssl/wolfcrypt/test/test.c \
   -fplugin-arg-instrument_callsites_plugin-csv-path=pmc_events.csv" \
   LDFLAGS="-L./testsuite -Wl,-rpath,./testsuite" \
   LIBS="-lpmc -lpthread -ldl"
@@ -56,7 +57,7 @@ CFLAGS="-g -O0 -fPIC -fno-inline -Wno-error=maybe-uninitialized \
 
 # Configure with plugin wrapper
 ./configure \
-CFLAGS="-fno-inline -Wno-error=maybe-uninitialized \
+CFLAGS="-Wno-error=maybe-uninitialized \
   -fplugin=./instrument_callsites_plugin.so \
   -fplugin-arg-instrument_callsites_plugin-include-file-list=test.c \
   -fplugin-arg-instrument_callsites_plugin-include-function-list=wc_Sha256Update,wc_Sha256GetHash,wc_Sha256Copy,wc_ShaUpdate,wc_ShaGetHash,wc_ShaCopy,wc_InitRng_ex,wc_PRF,wc_Tls13_HKDF_Extract,wc_Tls13_HKDF_Expand_Label,wc_Chacha_SetKey,wc_Chacha_SetIV,wc_Chacha_Process,wc_AesSetKey,wc_AesCbcEncrypt,wc_InitRsaKey_ex,wc_RsaPrivateKeyDecode,wc_RsaSSL_Sign,wc_InitDhKey,wc_DhKeyDecode,wc_DhGenerateKeyPair,ecc_test_key_decode,ecc_test_key_gen,wc_PBKDF1_ex,wc_PBKDF2_ex,wc_PKCS12_PBKDF \
@@ -65,7 +66,6 @@ CFLAGS="-fno-inline -Wno-error=maybe-uninitialized \
   LIBS="-lpmc -lpthread -ldl"
 
 make -j
-
 # Run with PMC measurement
 export PMC_EVENT_INDICES="0,1,2,3"
 ./testsuite/testsuite.test
@@ -159,8 +159,39 @@ static int load_events_from_csv(const char *csv_path,
 
 
 ```bash
+gdb --args ./testsuite/.libs/testsuite.test
 # inside (gdb)
-set environment LD_LIBRARY_PATH /home/lizeren/Desktop/wolfssl/src/.libs:/home/lizeren/Desktop/msr_trace/pmc-gcc-insert
+set environment LD_LIBRARY_PATH /home/lizeren/Desktop/wolfssl_manual/src/.libs:/home/lizeren/Desktop/wolfssl_manual/src:/home/lizeren/Desktop/wolfssl_manual/testsuite:/home/lizeren/Desktop/wolfssl_manual/testsuite/.libs
+
+set environment LD_LIBRARY_PATH /home/lizeren/Desktop/wolfssl/src/.libs:/home/lizeren/Desktop/wolfssl/src:/home/lizeren/Desktop/wolfssl/testsuite:/home/lizeren/Desktop/wolfssl/testsuite/.libs
+
 break pmc_measure_begin_csv
+#or
+b wolfcrypt/test/test.c:4437
 break pmc_measure_end
+```
+
+
+## DEBUG
+
+
+```bash
+COMMON_CFLAGS="-O0 -g -fno-inline -fno-omit-frame-pointer -fno-pie -no-pie"
+COMMON_LDFLAGS="-Wl,-rpath,$PWD/testsuite -no-pie"
+
+./configure \
+  CFLAGS="$COMMON_CFLAGS" \
+  LDFLAGS="$COMMON_LDFLAGS" \
+  LIBS="-L$PWD/testsuite -lpmc -lpthread -ldl"
+
+
+./configure \
+  CFLAGS="$COMMON_CFLAGS -fplugin=./instrument_callsites_plugin.so \
+    -fplugin-arg-instrument_callsites_plugin-include-file-list=wolfcrypt/test/test.c \
+    -fplugin-arg-instrument_callsites_plugin-include-function-list=wc_ShaCopy \
+    -fplugin-arg-instrument_callsites_plugin-csv-path=$PWD/pmc_events.csv" \
+  LDFLAGS="$COMMON_LDFLAGS" \
+  LIBS="-L$PWD/testsuite -lpmc -lpthread -ldl"
+
+
 ```
