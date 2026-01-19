@@ -301,3 +301,49 @@ libpmc deduplicates by label. Each unique label is only measured once per run. T
 - `pmc-gcc-insert/pmc.h` - libpmc API documentation
 - `pmc-gcc-insert/test/` - Example usage and test programs
 - `libpmc/` - PMC library implementation
+
+
+
+
+## TODO(known issues)
+
+When a target function name is a MACRO, the plugin will not be able to instrument it.
+
+Solution:
+
+```bash
+┌─────────────────────────────────────────────────────────────────┐
+│ Original Source (test/rsa_test.c:480)                           │
+│                                                                 │
+│   EVP_PKEY_assign_RSA(pkey, rsa)                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ [Preprocessor expands macro]
+┌─────────────────────────────────────────────────────────────────┐
+│ After Preprocessing                                             │
+│                                                                 │
+│   EVP_PKEY_assign(pkey, 6, rsa)   ← macro expanded              │
+│                                                                 │
+│   BUT: location still = test/rsa_test.c:480                     │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ [GIMPLE generation]
+┌─────────────────────────────────────────────────────────────────┐
+│ GIMPLE (what plugin sees)                                       │
+│                                                                 │
+│   CALL: EVP_PKEY_assign(pkey, 6, rsa)                          │
+│   LOCATION: test/rsa_test.c:480  ← preserved!                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ [Plugin reads source at location]
+┌─────────────────────────────────────────────────────────────────┐
+│ Source Line at 480:                                             │
+│                                                                 │
+│   "EVP_PKEY_assign_RSA(pkey, rsa)"                             │
+│                                                                 │
+│   → Contains "EVP_PKEY_assign_RSA(" which is in target list!    │
+│   → Instrument this call and label it "EVP_PKEY_assign_RSA"     │
+└─────────────────────────────────────────────────────────────────┘
+```
