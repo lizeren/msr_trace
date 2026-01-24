@@ -75,8 +75,18 @@ def compute_statistical_features(timestamps: List[int], sampling_period: int,
     return np.array(features, dtype=np.float32)
 
 
-def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16'):
-    """Load JSON features, compute statistics, and cache to disk."""
+def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16', 
+                        min_samples: int = 20):
+    """Load JSON features, compute statistics, and cache to disk.
+    
+    Args:
+        features_pattern: Glob pattern for JSON feature files
+        output_dir: Output directory for cached features
+        min_samples: Minimum samples required per function (default: 20)
+                    - Technical minimum: 4 (for stratified split)
+                    - Statistical minimum: 20-30 (basic validity)
+                    - Recommended: 50+ (reliable performance)
+    """
     
     files = sorted(glob.glob(features_pattern))
     
@@ -151,6 +161,88 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16')
     X = np.array(all_samples, dtype=np.float32)  # Shape: [N, 38, 16]
     y = np.array(all_labels)
     
+    # Analyze class distribution
+    print(f"\n{'='*80}")
+    print("Class Distribution Analysis")
+    print(f"{'='*80}\n")
+    
+    from collections import Counter
+    label_counts = Counter(all_labels)
+    
+    # Sort by count (descending) then by name
+    sorted_labels = sorted(label_counts.items(), key=lambda x: (-x[1], x[0]))
+    
+    print(f"Total unique functions: {len(label_counts)}")
+    print(f"Total samples: {len(all_labels)}")
+    print(f"Minimum samples threshold: {min_samples}")
+    print(f"")
+    
+    # Identify functions with too few samples
+    functions_too_few = [label for label, count in label_counts.items() if count < min_samples]
+    functions_adequate = [label for label, count in label_counts.items() if count >= min_samples]
+    
+    if functions_too_few:
+        total_samples_too_few = sum(label_counts[label] for label in functions_too_few)
+        print(f"⚠️  WARNING: {len(functions_too_few)} functions have < {min_samples} samples")
+        print(f"   These will be filtered out during training (losing {total_samples_too_few} samples)")
+        print(f"   Functions with adequate samples: {len(functions_adequate)}")
+        print(f"")
+    
+    # Display all function counts
+    print(f"Sample count per function:")
+    print(f"{'-'*80}")
+    print(f"{'Function Name':<50} {'Samples':>10} {'Status':>10}")
+    print(f"{'-'*80}")
+    
+    for label, count in sorted_labels:
+        status = "OK" if count >= min_samples else "TOO FEW"
+        marker = "⚠️ " if count < min_samples else "  "
+        print(f"{marker}{label:<48} {count:>10} {status:>10}")
+    
+    print(f"{'-'*80}")
+    print(f"{'TOTAL':<50} {len(all_labels):>10}")
+    print(f"")
+    
+    # Statistics
+    counts_list = list(label_counts.values())
+    print(f"Distribution statistics:")
+    print(f"  Max samples per function: {max(counts_list)}")
+    print(f"  Min samples per function: {min(counts_list)}")
+    print(f"  Mean samples per function: {np.mean(counts_list):.1f}")
+    print(f"  Median samples per function: {np.median(counts_list):.1f}")
+    print(f"  Imbalance ratio (max/min): {max(counts_list)/min(counts_list):.1f}x")
+    print(f"")
+    
+    # Filter out functions with too few samples before caching
+    if functions_too_few:
+        print(f"\n{'='*80}")
+        print(f"Filtering Data")
+        print(f"{'='*80}\n")
+        
+        print(f"Removing {len(functions_too_few)} functions with < {min_samples} samples...")
+        
+        # Create a mask for samples to keep
+        mask = np.array([label not in functions_too_few for label in all_labels])
+        
+        # Filter both features and labels
+        X_filtered = X[mask]
+        y_filtered = y[mask]
+        
+        samples_removed = len(X) - len(X_filtered)
+        print(f"  Samples before: {len(X)}")
+        print(f"  Samples after: {len(X_filtered)}")
+        print(f"  Removed: {samples_removed} samples ({samples_removed/len(X)*100:.2f}%)")
+        
+        # Update X and y
+        X = X_filtered
+        y = y_filtered
+        
+        print(f"\n✓ Filtered data ready for training")
+        print(f"  Functions: {len(functions_adequate)}")
+        print(f"  Samples: {len(X)}")
+    else:
+        print(f"\n✓ All functions meet minimum sample requirement")
+    
     # Save to disk
     cache_file = os.path.join(output_dir, 'features_cache.pkl')
     
@@ -168,6 +260,8 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16')
         'num_samples': len(X),
         'num_events': 38,
         'num_features': 16,
+        'min_samples_threshold': min_samples,
+        'functions_removed': functions_too_few if functions_too_few else [],
         'feature_names': [
             # From stats (1-6)
             'total_count_mean', 'total_count_std', 'duration_mean_ns', 
@@ -196,6 +290,15 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16')
         f.write(f"Data type: {X.dtype}\n")
         f.write(f"Cache file: {cache_file}\n")
         f.write(f"File size: {file_size_mb:.2f} MB\n\n")
+        f.write(f"Preprocessing:\n")
+        f.write(f"  Min samples threshold: {min_samples}\n")
+        if functions_too_few:
+            f.write(f"  Functions filtered: {len(functions_too_few)}\n")
+            f.write(f"  Functions in cache: {len(functions_adequate)}\n")
+        else:
+            f.write(f"  Functions filtered: 0\n")
+            f.write(f"  Functions in cache: {len(label_counts)}\n")
+        f.write(f"\n")
         f.write(f"Feature dimensions:\n")
         f.write(f"  Events per sample: 38\n")
         f.write(f"  Features per event: 16 (6 from stats + 10 from timestamps)\n")
@@ -206,11 +309,60 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16')
     
     print(f"  ✓ Metadata saved to: {metadata_file}")
     
+    # Save class distribution report
+    distribution_file = os.path.join(output_dir, 'class_distribution.txt')
+    with open(distribution_file, 'w') as f:
+        f.write(f"Class Distribution Report\n")
+        f.write(f"{'='*80}\n\n")
+        f.write(f"Total unique functions: {len(label_counts)}\n")
+        f.write(f"Total samples: {len(all_labels)}\n")
+        f.write(f"Min samples required for training: {min_samples}\n\n")
+        
+        if functions_too_few:
+            total_samples_too_few = sum(label_counts[label] for label in functions_too_few)
+            f.write(f"WARNING: {len(functions_too_few)} functions have < {min_samples} samples\n")
+            f.write(f"These will be filtered out during training (losing {total_samples_too_few} samples)\n")
+            f.write(f"Functions with adequate samples: {len(functions_adequate)}\n\n")
+        
+        f.write(f"\nSample count per function:\n")
+        f.write(f"{'-'*80}\n")
+        f.write(f"{'Function Name':<50} {'Samples':>10} {'Status':>10}\n")
+        f.write(f"{'-'*80}\n")
+        
+        for label, count in sorted_labels:
+            status = "OK" if count >= min_samples else "TOO FEW"
+            marker = "[!] " if count < min_samples else "    "
+            f.write(f"{marker}{label:<46} {count:>10} {status:>10}\n")
+        
+        f.write(f"{'-'*80}\n")
+        f.write(f"{'TOTAL':<50} {len(all_labels):>10}\n\n")
+        
+        f.write(f"\nDistribution statistics:\n")
+        f.write(f"  Max samples per function: {max(counts_list)}\n")
+        f.write(f"  Min samples per function: {min(counts_list)}\n")
+        f.write(f"  Mean samples per function: {np.mean(counts_list):.1f}\n")
+        f.write(f"  Median samples per function: {np.median(counts_list):.1f}\n")
+        f.write(f"  Imbalance ratio (max/min): {max(counts_list)/min(counts_list):.1f}x\n")
+        
+        if functions_too_few:
+            f.write(f"\n\nFunctions with too few samples (< {min_samples}):\n")
+            f.write(f"{'-'*60}\n")
+            for label in sorted(functions_too_few):
+                f.write(f"  {label}: {label_counts[label]} samples\n")
+    
+    print(f"  ✓ Class distribution saved to: {distribution_file}")
+    
     print(f"\n{'='*80}")
     print("✅ Preprocessing complete!")
     print(f"{'='*80}\n")
+    print(f"Summary:")
+    print(f"  Cached samples: {len(X)}")
+    print(f"  Functions: {len(functions_adequate) if functions_too_few else len(label_counts)}")
+    print(f"  Filtered out: {len(functions_too_few)} functions")
+    print(f"  Cache file: {cache_file}")
+    print(f"")
     print(f"To use cached features in training:")
-    print(f"  python3 train_xgboost_gpu.py --cache")
+    print(f"  python3 train_xgboost_gpu.py --cache --scale-pos-weight --gpu")
     print(f"  python3 train_dual_stream.py --cache")
     print(f"  python3 train_hybrid_cnn.py --cache")
     print()
@@ -222,10 +374,22 @@ def main():
                         help='Path pattern to JSON feature files')
     parser.add_argument('--output', default='features_16',
                         help='Output directory for cached features')
+    parser.add_argument('--min-samples', type=int, default=20,
+                        help='Minimum samples per function (default: 20). '
+                             'Functions with fewer samples will be flagged. '
+                             'Recommended: 4 (technical min), 20 (statistical min), 50+ (reliable)')
     
     args = parser.parse_args()
     
-    preprocess_and_cache(args.features, args.output)
+    print(f"\n{'='*80}")
+    print(f"PMC Feature Preprocessing")
+    print(f"{'='*80}")
+    print(f"  Features pattern: {args.features}")
+    print(f"  Output directory: {args.output}")
+    print(f"  Min samples threshold: {args.min_samples}")
+    print(f"{'='*80}\n")
+    
+    preprocess_and_cache(args.features, args.output, args.min_samples)
     
     return 0
 
