@@ -207,9 +207,45 @@ def main():
     for i, e in enumerate(event_consistency[:15], 1):
         print(f"{i:<6} {e['mean_cv']:<12.2f} {e['std_across_funcs']:<18.2f} {e['num_functions']:<10} {e['event_name']}")
     
+    # ========== ANALYSIS 4: Event ranking by coverage ==========
+    print(f"\n{'=' * 120}")
+    print("ANALYSIS 4: EVENT RANKING BY COVERAGE")
+    print("(Events that appear most consistently across all functions and files)")
+    print("=" * 120)
+    
+    # Rank events by coverage
+    max_coverage = num_functions * num_files
+    coverage_rankings = []
+    for e in event_rankings:
+        coverage = e['count']
+        coverage_pct = (coverage / max_coverage) * 100
+        coverage_rankings.append({
+            'event_name': e['event_name'],
+            'coverage': coverage,
+            'coverage_pct': coverage_pct,
+            'mean_cv': e['mean_cv'],
+            'mean_count': e['mean_count']
+        })
+    
+    coverage_rankings.sort(key=lambda x: x['coverage'], reverse=True)
+    
+    print(f"\n{'Rank':<6} {'Coverage':<12} {'Cov%':<10} {'Mean CV%':<12} {'Mean Count':<15} {'Event'}")
+    print("-" * 120)
+    
+    for i, e in enumerate(coverage_rankings[:20], 1):  # Show top 20
+        print(f"{i:<6} {e['coverage']}/{max_coverage:<9} {e['coverage_pct']:<10.1f} {e['mean_cv']:<12.2f} {e['mean_count']:<15.0f} {e['event_name']}")
+    
+    # Save coverage rankings
+    coverage_csv = os.path.join(output_dir, "events_by_coverage.csv")
+    with open(coverage_csv, 'w') as f:
+        f.write("rank,event_name,coverage,coverage_pct,mean_cv,mean_count\n")
+        for i, e in enumerate(coverage_rankings, 1):
+            f.write(f"{i},{e['event_name']},{e['coverage']},{e['coverage_pct']:.2f},{e['mean_cv']:.2f},{e['mean_count']:.2f}\n")
+    print(f"\nCoverage rankings saved to: {coverage_csv}")
+    
     # ========== FINAL: Combined score ==========
     print(f"\n{'=' * 120}")
-    print("FINAL: TOP 15 EVENT CANDIDATES")
+    print("FINAL: TOP 15 EVENT CANDIDATES (Combined Score)")
     print("=" * 120)
     
     # Create combined score
