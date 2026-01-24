@@ -290,6 +290,19 @@ def main():
     for i, e in enumerate(combined_scores[:15], 1):
         print(f"{i:<6} {e['score']:<10.2f} {e['mean_cv']:<8.2f} {e['coverage_norm']:<10.3f} {e['coverage_penalty']:<10.4f} {e['consistency_penalty']:<10.4f} {e['count_factor']:<10.4f} {e['event_name']}")
     
+    # Calculate and display averages for ALL events
+    all_events = combined_scores
+    avg_score = sum(e['score'] for e in all_events) / len(all_events)
+    avg_cv = sum(e['mean_cv'] for e in all_events) / len(all_events)
+    avg_covnorm = sum(e['coverage_norm'] for e in all_events) / len(all_events)
+    avg_covpen = sum(e['coverage_penalty'] for e in all_events) / len(all_events)
+    avg_conspen = sum(e['consistency_penalty'] for e in all_events) / len(all_events)
+    avg_cntfact = sum(e['count_factor'] for e in all_events) / len(all_events)
+    
+    print("-" * 120)
+    print(f"{'AVG':<6} {avg_score:<10.2f} {avg_cv:<8.2f} {avg_covnorm:<10.3f} {avg_covpen:<10.4f} {avg_conspen:<10.4f} {avg_cntfact:<10.4f} {'(Average Across All Events)'}")
+    print("=" * 120)
+    
     # Save top 15
     top15_csv = os.path.join(output_dir, "top15_events_combined.csv")
     with open(top15_csv, 'w') as f:
