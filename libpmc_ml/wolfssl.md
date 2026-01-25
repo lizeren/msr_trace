@@ -17,7 +17,7 @@ make -j
 ./testsuite/testsuite.test
 ```
 
-place to put libpmc.so, pmc.h, collect_pmc_features.py and pmc_events.csv
+### place to put libpmc.so, pmc.h, collect_pmc_features.py and pmc_events.csv
 
 libpmc.so: wolfssl/testsuite/libpmc.so
 pmc.h: wolfssl/testsuite/pmc.h
@@ -47,6 +47,7 @@ python3 collect_pmc_features.py --target "./testsuite/testsuite.test" --runs 5 -
 CFLAGS="-g -Wno-error=maybe-uninitialized \
   -fplugin=./instrument_callsites_plugin.so \
   -fdump-tree-all \
+  -dumpdir gcc-dumps/ \
   -fplugin-arg-instrument_callsites_plugin-debug\
   -fplugin-arg-instrument_callsites_plugin-include-file-list=test.c \
   -fplugin-arg-instrument_callsites_plugin-include-function-list=wc_ShaCopy \
@@ -194,4 +195,20 @@ COMMON_LDFLAGS="-Wl,-rpath,$PWD/testsuite -no-pie"
   LIBS="-L$PWD/testsuite -lpmc -lpthread -ldl"
 
 
+```
+
+## Delete -fdump-tree-all
+```bash
+# Preview what would be deleted (recommended first):
+
+find . -maxdepth 1 -type f \
+  \( -name '*.[0-9]*t.*' -o -name 'a--.[0-9]*t.*' \) \
+  -print
+
+
+# Actually delete them:
+
+find . -maxdepth 1 -type f \
+  \( -name '*.[0-9]*t.*' -o -name 'a--.[0-9]*t.*' \) \
+  -delete
 ```

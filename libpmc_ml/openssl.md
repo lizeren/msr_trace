@@ -25,6 +25,23 @@ To build and run wrapped rsa_test.c
 ```bash
 # at root directory of openssl
 make test/rsa_test EX_LIBS="-L.. -lpmc -ldl -pthread"
+# or at openssl root
+make test/rsa_test EX_LIBS="-L/mnt/linuxstorage/openssl -lpmc -ldl -pthread"
+# if use gcc plugin instrumentation
+make test/rsa_test EX_LIBS="-L/mnt/linuxstorage/openssl -lpmc -ldl -pthread" CFLAGS="-fplugin=./instrument_callsites_plugin.so \
+  -fplugin-arg-instrument_callsites_plugin-debug\
+  -fplugin-arg-instrument_callsites_plugin-include-file-list=test/rsa_test.c \
+  -fplugin-arg-instrument_callsites_plugin-include-function-list=RSA_public_encrypt,RSA_private_decrypt,BN_bin2bn,RSA_new,EVP_sha256,EVP_MD_CTX_new,EVP_PKEY_new,RSA_set0_factors,RSA_set0_key,EVP_PKEY_assign_RSA,EVP_DigestSignInit,EVP_DigestSign,RSA_sign_ASN1_OCTET_STRING,RSA_verify_ASN1_OCTET_STRING \
+  -fplugin-arg-instrument_callsites_plugin-csv-path=pmc_events.csv"
+
+
+# temp: compile variant
+make test/rsa_test_variant EX_LIBS="-L.. -lpmc -ldl -pthread"
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH" # if libpmc.so is in the root directory of openssl
+python3 collect_pmc_features.py --target "./rsa_test_variant" --runs 5 --total 1 --name rsa_variant --start 1 > result.log
+
+
+export PMC_EVENT_INDICES="0,1,2,3" && ./test/rsa_test
 #python collector to run test/rsa_test.c 5 times and save the average results
 python3 collect_pmc_features.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 > result.log
 
