@@ -25,5 +25,9 @@ export PMC_EVENT_INDICES="0,1,2,3"
 
 ```bash
 python3 collect_pmc_features.py --target "./example_cache_call" --runs 5 --total 10 --name example_cache_call --start 1 > result.log
-
 ```
+
+### file explanation
+
+pmc_events.csv : sample period is longer than pmc_events_chill.csv
+collect_pmc_features.py : it will record events even if they don't have any samples, which is unlike collect_pmc_features_old.py

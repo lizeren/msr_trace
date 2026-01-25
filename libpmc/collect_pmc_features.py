@@ -22,6 +22,7 @@ import argparse
 import csv
 import numpy as np
 import shlex
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -32,17 +33,50 @@ class PMCTemporalCollector:
                  pmc_output: str = "pmc_results.json"):
         # Parse target command (binary + arguments)
         # Example: "./example_cache_call arg1 arg2" -> ["./example_cache_call", "arg1", "arg2"]
+        # Example: "taskset -c 2 ./example_cache_call" -> ["taskset", "-c", "2", "./example_cache_call"]
         self.target_command = shlex.split(target_binary)
-        self.target_binary_path = self.target_command[0]  # Just the binary path
         
         self.csv_file = csv_file
         self.output_json = output_json
         self.pmc_output = pmc_output
         self.feature_db = {}
         
-        # Verify target binary exists
-        if not os.path.exists(self.target_binary_path):
-            raise FileNotFoundError(f"Target binary not found: {self.target_binary_path}")
+        # Find the actual target binary in the command
+        # Handle cases like: "taskset -c 2 ./binary" or just "./binary"
+        self.target_binary_path = None
+        
+        for elem in self.target_command:
+            # Check if it's a local file (starts with ./ or / or exists as file)
+            if elem.startswith('./') or elem.startswith('/'):
+                if os.path.exists(elem):
+                    self.target_binary_path = elem
+                    break
+            # Check if it exists as a file in current directory
+            elif os.path.exists(elem) and not shutil.which(self.target_command[0]):
+                self.target_binary_path = elem
+                break
+        
+        # If no local binary found, assume first element is the target
+        if not self.target_binary_path:
+            # Check if first element is a system command (like taskset)
+            if shutil.which(self.target_command[0]):
+                # System command wrapper detected, look for binary in remaining args
+                for elem in self.target_command[1:]:
+                    if os.path.exists(elem):
+                        self.target_binary_path = elem
+                        break
+                if not self.target_binary_path:
+                    # Couldn't find target binary, but system command exists, allow it
+                    print(f"⚠️  Warning: Using system command '{self.target_command[0]}', "
+                          f"couldn't verify target binary exists")
+                    self.target_binary_path = self.target_command[0]
+            else:
+                self.target_binary_path = self.target_command[0]
+        
+        # Verify target binary exists (only for local files, not system commands)
+        if self.target_binary_path and not shutil.which(self.target_binary_path):
+            if not os.path.exists(self.target_binary_path):
+                raise FileNotFoundError(f"Target binary not found: {self.target_binary_path}")
         
         # Verify CSV exists
         if not os.path.exists(csv_file):
@@ -52,9 +86,11 @@ class PMCTemporalCollector:
         self.event_name_map = self.build_event_name_to_index_map()
         print(f"✓ Cached {len(self.event_name_map)} event mappings from {csv_file}")
         
-        # Print command info if arguments are present
+        # Print command info
         if len(self.target_command) > 1:
-            print(f"✓ Target command: {self.target_binary_path} with {len(self.target_command) - 1} argument(s)")
+            print(f"✓ Full command: {' '.join(self.target_command)}")
+            if self.target_binary_path != self.target_command[0]:
+                print(f"✓ Target binary: {self.target_binary_path}")
     
     def read_event_indices_from_csv(self) -> List[int]:
         """Read a CSV file and returns a list of integers taken from the "index" column of that file."""
@@ -331,8 +367,6 @@ class PMCTemporalCollector:
                     continue
                 
                 samples = event.get('samples', [])
-                if not samples:
-                    continue
                 
                 # Map event name to CSV index
                 event_name = event['event_name'] # extract event names from JSON entry "event_name"
@@ -348,17 +382,23 @@ class PMCTemporalCollector:
                     'event_name': event['event_name'],
                     'mode': mode,
                     'sampling_period': event.get('sample_period', 0),
-                    'total_count': event['count'],
+                    'total_count': event.get('count', 0),
                     'num_samples': len(samples)
                 }
                 
-                # Extract temporal sequence (normalize to t=0)
-                t0 = samples[0]['time']
-                event_info['timestamps_ns'] = [s['time'] - t0 for s in samples]
-                event_info['cpus'] = [s['cpu'] for s in samples] # keep track how many CPUs are involved in this workload
-                
-                # Derived features
-                event_info['total_duration_ns'] = event_info['timestamps_ns'][-1]
+                # Extract temporal sequence (normalize to t=0) if samples exist
+                if samples:
+                    t0 = samples[0]['time']
+                    event_info['timestamps_ns'] = [s['time'] - t0 for s in samples]
+                    event_info['cpus'] = [s['cpu'] for s in samples] # keep track how many CPUs are involved in this workload
+                    
+                    # Derived features
+                    event_info['total_duration_ns'] = event_info['timestamps_ns'][-1]
+                else:
+                    # No samples but has counter value
+                    event_info['timestamps_ns'] = []
+                    event_info['cpus'] = []
+                    event_info['total_duration_ns'] = 0
                 
                 workload_data[workload_label].append(event_info)
         
@@ -431,22 +471,27 @@ class PMCTemporalCollector:
         # Average each sample position across runs
         timestamps_avg = []
         
-        for i in range(target_len):
-            # Collect i-th sample from each run (if it exists)
-            ts_vals = [r['timestamps_ns'][i] for r in run_data if i < len(r['timestamps_ns'])]
-            
-            if ts_vals:
-                timestamps_avg.append(int(np.mean(ts_vals)))
+        # Only process timestamps if there are samples
+        if target_len > 0:
+            for i in range(target_len):
+                # Collect i-th sample from each run (if it exists)
+                ts_vals = [r['timestamps_ns'][i] for r in run_data if i < len(r['timestamps_ns'])]
+                
+                if ts_vals:
+                    timestamps_avg.append(int(np.mean(ts_vals)))
         
         averaged['timestamps_ns'] = timestamps_avg
         averaged['num_samples'] = len(timestamps_avg)
         
         # Statistics across runs
+        # Handle cases where total_duration_ns might be 0 or missing
+        durations = [r.get('total_duration_ns', 0) for r in run_data]
+        
         averaged['stats'] = {
             'total_count_mean': float(np.mean([r['total_count'] for r in run_data])),
             'total_count_std': float(np.std([r['total_count'] for r in run_data])),
-            'duration_mean_ns': float(np.mean([r['total_duration_ns'] for r in run_data])),
-            'duration_std_ns': float(np.std([r['total_duration_ns'] for r in run_data])),
+            'duration_mean_ns': float(np.mean(durations)),
+            'duration_std_ns': float(np.std(durations)),
             'num_samples_mean': float(np.mean(sample_counts)),
             'num_samples_std': float(np.std(sample_counts))
         }
@@ -490,8 +535,14 @@ class PMCTemporalCollector:
         print(f"  Function: {function_label}")
         print(f"  Event: {temporal_data['event_name']}")
         print(f"  Samples: {temporal_data['num_samples']}")
-        print(f"  Duration: {temporal_data['stats']['duration_mean_ns']/1e6:.2f}ms "
-              f"(±{temporal_data['stats']['duration_std_ns']/1e6:.2f}ms)")
+        
+        # Handle cases where duration might be 0 (no samples)
+        if temporal_data['num_samples'] > 0:
+            print(f"  Duration: {temporal_data['stats']['duration_mean_ns']/1e6:.2f}ms "
+                  f"(±{temporal_data['stats']['duration_std_ns']/1e6:.2f}ms)")
+        else:
+            print(f"  Duration: N/A (no samples)")
+        
         print(f"  Count: {temporal_data['stats']['total_count_mean']:.0f} "
               f"(±{temporal_data['stats']['total_count_std']:.0f})")
     
@@ -601,7 +652,7 @@ Example:
     
     # Hardcoded defaults
     csv_file = 'pmc_events.csv'
-    batch_size = 4 # collect 4 event at a time
+    batch_size = 1 # collect 4 event at a time
 
     # Cleanup: remove pmc_results.json
     pmc_output = 'pmc_results.json'
