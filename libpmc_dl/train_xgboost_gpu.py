@@ -20,7 +20,7 @@ import glob
 import argparse
 import os
 from typing import List, Tuple
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, accuracy_score, balanced_accuracy_score, confusion_matrix
 import xgboost as xgb
@@ -175,6 +175,8 @@ def main():
     args = parser.parse_args()
     
     # Load data
+    groups = None  # Will store file/session groups for proper splitting
+    
     if args.cache:
         print("\n📦 Loading cached features...")
         cache_file = 'features_16/features_cache.pkl'
@@ -189,13 +191,16 @@ def main():
         
         X = cache_data['X'].reshape(len(cache_data['X']), -1)  # Flatten [N, 38, 16] -> [N, 608]
         y = cache_data['y']
+        groups = cache_data.get('groups', None)  # Load group information
         
         # Show preprocessing info
         min_samples_threshold = cache_data.get('min_samples_threshold', 'unknown')
         functions_removed = cache_data.get('functions_removed', [])
+        num_files = cache_data.get('num_files', 'unknown')
         
         print(f"✓ Loaded {len(X)} samples from cache (shape: {X.shape})")
         print(f"  Preprocessing threshold: {min_samples_threshold} samples")
+        print(f"  Files in cache: {num_files}")
         
         if functions_removed:
             print(f"  Note: {len(functions_removed)} functions were filtered during preprocessing:")
@@ -203,6 +208,12 @@ def main():
                 print(f"    - {func}")
         else:
             print(f"  Note: No functions were filtered (all met minimum threshold)")
+        
+        if groups is None:
+            print(f"\n⚠️  WARNING: No group information in cache!")
+            print(f"  Cache was created with old version of preprocess_features.py")
+            print(f"  Will use sample-based split (may have data leakage)")
+            print(f"  Please re-run: python3 preprocess_features.py")
     else:
         X, y = load_data(args.features)
     
@@ -233,13 +244,45 @@ def main():
         if not args.scale_pos_weight:
             print(f"  💡 Consider using --scale-pos-weight flag")
     
-    # Split data
-    X_train, X_temp, y_train, y_temp = train_test_split(
-        X, y_encoded, test_size=0.3, random_state=42, stratify=y_encoded
-    )
-    X_val, X_test, y_val, y_test = train_test_split(
-        X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
-    )
+    # Split data with group-aware splitting to prevent data leakage
+    if groups is not None:
+        print(f"\n✓ Using GROUP-BASED splitting (prevents data leakage)")
+        print(f"  Unique groups (files): {len(np.unique(groups))}")
+        print(f"  This ensures samples from the same file stay together")
+        
+        # First split: separate out test set (15% of groups)
+        gss_test = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
+        train_val_idx, test_idx = next(gss_test.split(X, y, groups))
+        
+        X_train_val = X[train_val_idx]
+        y_train_val = y_encoded[train_val_idx]
+        groups_train_val = groups[train_val_idx]
+        
+        X_test = X[test_idx]
+        y_test = y_encoded[test_idx]
+        
+        # Second split: split train_val into train and val (85% train, 15% val of remaining)
+        gss_val = GroupShuffleSplit(n_splits=1, test_size=0.15/0.85, random_state=42)
+        train_idx, val_idx = next(gss_val.split(X_train_val, y_train_val, groups_train_val))
+        
+        X_train = X_train_val[train_idx]
+        y_train = y_train_val[train_idx]
+        
+        X_val = X_train_val[val_idx]
+        y_val = y_train_val[val_idx]
+        
+    else:
+        print(f"\n⚠️  Using SAMPLE-BASED splitting (may have data leakage)")
+        print(f"  WARNING: Samples from the same file may be split across train/val/test")
+        print(f"  This can lead to overoptimistic results!")
+        
+        # Fall back to sample-based split
+        X_train, X_temp, y_train, y_temp = train_test_split(
+            X, y_encoded, test_size=0.3, random_state=42, stratify=y_encoded
+        )
+        X_val, X_test, y_val, y_test = train_test_split(
+            X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
+        )
     
     print(f"\nData split:")
     print(f"  Train: {len(X_train)} samples")
@@ -355,10 +398,13 @@ def main():
     importance_sorted = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:20]
     
     for idx, (feat, score) in enumerate(importance_sorted, 1):
-        event_num = int(feat[1:]) // 10
-        feat_num = int(feat[1:]) % 10
-        feat_names = ['total_dur', 'mean_int', 'std_int', 'min_int', 'max_int',
-                      'samp_rate', 'n_samp', 'q25', 'q50', 'q75']
+        event_num = int(feat[1:]) // 16  # 16 features per event
+        feat_num = int(feat[1:]) % 16
+        feat_names = [
+            'cnt_mean', 'cnt_std', 'dur_mean', 'dur_std', 'n_mean', 'n_std',  # Stats (1-6)
+            'tot_dur', 'mean_int', 'std_int', 'min_int', 'max_int',           # Temporal (7-11)
+            'samp_rate', 'n_samp', 'q25', 'q50', 'q75'                        # Temporal (12-16)
+        ]
         print(f"  {idx:2d}. {feat}: {score:8.2f}  (event_{event_num:02d} {feat_names[feat_num]})")
     
     # Confusion matrix analysis

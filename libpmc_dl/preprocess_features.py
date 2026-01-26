@@ -102,6 +102,7 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
     
     all_samples = []
     all_labels = []
+    all_groups = []  # Track which file each sample came from
     
     print(f"\n{'='*80}")
     print("Processing files...")
@@ -110,6 +111,9 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
     for file_idx, file_path in enumerate(files):
         if file_idx % 200 == 0:
             print(f"  Progress: {file_idx}/{len(files)} files...")
+        
+        # Use file basename as group identifier
+        file_group = os.path.basename(file_path)
         
         try:
             with open(file_path, 'r') as f:
@@ -154,12 +158,14 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
             sample = np.array(event_features[:38], dtype=np.float32)
             all_samples.append(sample)
             all_labels.append(workload_label)
-    
-    print(f"\n  ✓ Processed {len(all_samples)} samples")
+            all_groups.append(file_group)  # Track which file this sample came from
     
     # Convert to arrays
     X = np.array(all_samples, dtype=np.float32)  # Shape: [N, 38, 16]
     y = np.array(all_labels)
+    groups = np.array(all_groups)  # Group identifiers (file names)
+    
+    print(f"\n  ✓ Processed {len(all_samples)} samples from {len(np.unique(groups))} unique files")
     
     # Analyze class distribution
     print(f"\n{'='*80}")
@@ -224,22 +230,27 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
         # Create a mask for samples to keep
         mask = np.array([label not in functions_too_few for label in all_labels])
         
-        # Filter both features and labels
+        # Filter features, labels, AND groups
         X_filtered = X[mask]
         y_filtered = y[mask]
+        groups_filtered = groups[mask]
         
         samples_removed = len(X) - len(X_filtered)
         print(f"  Samples before: {len(X)}")
         print(f"  Samples after: {len(X_filtered)}")
         print(f"  Removed: {samples_removed} samples ({samples_removed/len(X)*100:.2f}%)")
+        print(f"  Files before: {len(np.unique(groups))}")
+        print(f"  Files after: {len(np.unique(groups_filtered))}")
         
-        # Update X and y
+        # Update X, y, and groups
         X = X_filtered
         y = y_filtered
+        groups = groups_filtered
         
         print(f"\n✓ Filtered data ready for training")
         print(f"  Functions: {len(functions_adequate)}")
         print(f"  Samples: {len(X)}")
+        print(f"  Files: {len(np.unique(groups))}")
     else:
         print(f"\n✓ All functions meet minimum sample requirement")
     
@@ -256,8 +267,10 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
     cache_data = {
         'X': X,
         'y': y,
+        'groups': groups,  # Add group information for proper train/test splitting
         'shape': X.shape,
         'num_samples': len(X),
+        'num_files': len(np.unique(groups)),
         'num_events': 38,
         'num_features': 16,
         'min_samples_threshold': min_samples,
