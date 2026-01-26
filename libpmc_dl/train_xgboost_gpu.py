@@ -3,11 +3,15 @@
 XGBoost GPU Training for PMC Function Classification
 
 Single file with everything needed:
-- Data loading from JSON features
-- Statistical feature computation
+- Data loading from JSON features or cached preprocessed features
+- Statistical feature computation (when loading from JSON)
 - XGBoost training with GPU acceleration
 - Class imbalance handling
 - Comprehensive evaluation with balanced accuracy
+
+Note: Function filtering based on minimum samples is done during preprocessing.
+      Use preprocess_features.py with --min-samples to control which functions
+      are included in the cached data.
 """
 
 import json
@@ -22,34 +26,59 @@ from sklearn.metrics import classification_report, accuracy_score, balanced_accu
 import xgboost as xgb
 
 
-def compute_statistical_features(timestamps: List[int], sampling_period: int) -> np.ndarray:
+def compute_statistical_features(timestamps: List[int], sampling_period: int,
+                                total_count_mean: float = 0.0,
+                                total_count_std: float = 0.0,
+                                duration_mean_ns: float = 0.0,
+                                duration_std_ns: float = 0.0,
+                                num_samples_mean: float = 0.0,
+                                num_samples_std: float = 0.0) -> np.ndarray:
     """
-    Compute 10 statistical features on timestamp intervals.
+    Compute 16 statistical features: 6 from stats + 10 from timestamp intervals.
     
-    Features:
-    1. total_duration, 2. mean_interval, 3. std_interval, 4. min_interval, 5. max_interval
-    6. sample_rate, 7. num_samples, 8. q25, 9. q50 (median), 10. q75
+    Features from stats (1-6):
+    1. total_count_mean, 2. total_count_std, 3. duration_mean_ns, 
+    4. duration_std_ns, 5. num_samples_mean, 6. num_samples_std
+    
+    Features from timestamps (7-16):
+    7. total_duration, 8. mean_interval, 9. std_interval, 10. min_interval, 11. max_interval
+    12. sample_rate, 13. num_samples, 14. q25, 15. q50 (median), 16. q75
     """
+    # Features 1-6: From stats (always available)
+    features = [
+        total_count_mean,
+        total_count_std,
+        duration_mean_ns,
+        duration_std_ns,
+        num_samples_mean,
+        num_samples_std
+    ]
+    
+    # Compute temporal features if we have enough timestamps
     if len(timestamps) < 2:
-        return np.zeros(10, dtype=np.float32)
+        # Not enough timestamps - pad with zeros for temporal features
+        features.extend([0.0] * 10)
+        return np.array(features, dtype=np.float32)
     
     intervals = np.diff(timestamps)
     
     if len(intervals) == 0 or np.all(intervals == 0):
-        return np.zeros(10, dtype=np.float32)
+        features.extend([0.0] * 10)
+        return np.array(features, dtype=np.float32)
     
-    features = [
-        timestamps[-1] - timestamps[0],  # 0: total_duration
-        np.mean(intervals),              # 1: mean_interval
-        np.std(intervals),               # 2: std_interval
-        np.min(intervals),               # 3: min_interval
-        np.max(intervals),               # 4: max_interval
-        len(timestamps) / (timestamps[-1] - timestamps[0] + 1),  # 5: sample_rate
-        len(timestamps),                 # 6: num_samples
-        np.percentile(intervals, 25),    # 7: q25
-        np.percentile(intervals, 50),    # 8: q50 (median)
-        np.percentile(intervals, 75),    # 9: q75
-    ]
+    # Temporal features (7-16)
+    features.extend([
+        timestamps[-1] - timestamps[0],  # 7: total_duration
+        np.mean(intervals),              # 8: mean_interval
+        np.std(intervals),               # 9: std_interval
+        np.min(intervals),               # 10: min_interval
+        np.max(intervals),               # 11: max_interval
+        len(timestamps) / (timestamps[-1] - timestamps[0] + 1),  # 12: sample_rate
+        len(timestamps),                 # 13: num_samples
+        np.percentile(intervals, 25),    # 14: q25
+        np.percentile(intervals, 50),    # 15: q50 (median)
+        np.percentile(intervals, 75),    # 16: q75
+    ])
     
     return np.array(features, dtype=np.float32)
 
@@ -83,7 +112,7 @@ def load_data(features_pattern: str) -> Tuple[np.ndarray, List[str]]:
                 timestamps = event_data.get('timestamps_ns', [])
                 sampling_period = event_data.get('sampling_period', 100)
                 
-                # Get all stats
+                # Get all stats (these are always available in the JSON)
                 stats_dict = event_data.get('stats', {})
                 total_count_mean = stats_dict.get('total_count_mean', 0.0)
                 total_count_std = stats_dict.get('total_count_std', 0.0)
@@ -92,7 +121,7 @@ def load_data(features_pattern: str) -> Tuple[np.ndarray, List[str]]:
                 num_samples_mean = stats_dict.get('num_samples_mean', 0.0)
                 num_samples_std = stats_dict.get('num_samples_std', 0.0)
                 
-                # Compute stats (16 features)
+                # Compute 16 features per event
                 stats = compute_statistical_features(
                     timestamps, sampling_period,
                     total_count_mean, total_count_std,
@@ -158,9 +187,22 @@ def main():
         with open(cache_file, 'rb') as f:
             cache_data = pickle.load(f)
         
-        X = cache_data['X'].reshape(len(cache_data['X']), -1)  # Flatten [N, 38, 10] -> [N, 380]
+        X = cache_data['X'].reshape(len(cache_data['X']), -1)  # Flatten [N, 38, 16] -> [N, 608]
         y = cache_data['y']
+        
+        # Show preprocessing info
+        min_samples_threshold = cache_data.get('min_samples_threshold', 'unknown')
+        functions_removed = cache_data.get('functions_removed', [])
+        
         print(f"✓ Loaded {len(X)} samples from cache (shape: {X.shape})")
+        print(f"  Preprocessing threshold: {min_samples_threshold} samples")
+        
+        if functions_removed:
+            print(f"  Note: {len(functions_removed)} functions were filtered during preprocessing:")
+            for func in functions_removed:
+                print(f"    - {func}")
+        else:
+            print(f"  Note: No functions were filtered (all met minimum threshold)")
     else:
         X, y = load_data(args.features)
     
