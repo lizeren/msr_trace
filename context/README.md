@@ -4,16 +4,18 @@ A shared library for generating different microarchitectural contexts to control
 
 ## Overview
 
-The Context Mixer library provides 8 different "mixers" that perturb various microarchitectural states:
+The Context Mixer library provides 8 different "mixers" that gently perturb various microarchitectural states with minimal overhead:
 
-1. **LLC Thrash (cache-cold)** - Touches a large buffer (64-256MB) to evict all prior cache state
-2. **L1D Hot (cache-hot baseline)** - Repeatedly touches a small buffer (~32KB) to create stable L1 cache state  
-3. **Instruction-cache churn** - Calls many small functions in pseudo-random order to perturb I-cache/BTB
-4. **Branch chaos** - Data-dependent branches driven by PRNG to scramble branch predictor state
-5. **TLB thrash** - Touches one byte per page across large mapping to stress TLB/page walks
-6. **ALU spin (power/frequency baseline)** - Tight integer arithmetic loop for consistent frequency/power
-7. **Memory mixed (stream + random)** - Combines sequential and random accesses to affect prefetchers
-8. **Alloc chaos** - Allocates/frees randomized sizes to perturb heap state and alignment
+1. **LLC Thrash (cache-cold)** - Touches 64KB (1K cache lines) with 1 pass
+2. **L1D Hot (cache-hot baseline)** - Touches 64 cache lines (4KB), 5 passes to keep hot in L1
+3. **Instruction-cache churn** - Calls 10 random small functions to gently perturb I-cache/BTB
+4. **Branch chaos** - 250 data-dependent branches to scramble branch predictor state
+5. **TLB thrash** - Touches 64 pages (256KB), 1 pass to stress TLB
+6. **ALU spin (power/frequency baseline)** - 1,000 integer operations for gentle computation
+7. **Memory mixed (stream + random)** - Sequential touch of 256KB + 100 random accesses
+8. **Alloc chaos** - 50 malloc/free operations (64-1024 bytes) to perturb heap state
+
+All mixers use deterministic behavior (fixed seed) for reproducibility.
 
 ## Building
 
@@ -42,12 +44,8 @@ Installs the library to `/usr/local/lib` and header to `/usr/local/include`.
 
 int main() {
     // Mixer type is read from MIXER_INDICES environment variable
-    
-    // Run for 1 second (mixer type determined by env var)
-    context_mixer_run(1000000);
-    
-    // Run for 500ms
-    context_mixer_run(500000);
+    // Runs with fixed iterations (very fast)
+    context_mixer_run();
     
     return 0;
 }
@@ -63,17 +61,17 @@ gcc -o myprogram myprogram.c -lcontext_mixer
 ### Command Line Example
 
 ```bash
-# Run LLC thrash for 500ms
+# Run LLC thrash
 export MIXER_INDICES=1
-./example 500000
+./example
 
-# Run branch chaos for 250ms
+# Run branch chaos
 export MIXER_INDICES=4
-./example 250000
+./example
 
-# Run L1D hot for 1 second
+# Run L1D hot
 export MIXER_INDICES=2
-./example 1000000
+./example
 ```
 
 The `MIXER_INDICES` environment variable determines which mixer to run (1-8).
@@ -82,10 +80,13 @@ The `MIXER_INDICES` environment variable determines which mixer to run (1-8).
 
 ### Function
 
-- `int context_mixer_run(size_t duration_us)` - Run mixer for specified duration (microseconds)
+- `int context_mixer_run(void)` - Run mixer with gentle, fixed iterations
   - Mixer type is read from `MIXER_INDICES` environment variable (1-8)
   - Returns 0 on success, -1 on error
   - If `MIXER_INDICES` not set or invalid, prints warning and returns 0
+  - Execution time: typically microseconds (very fast, minimal overhead)
+  - Deterministic behavior using fixed seed for reproducibility
+  - Small memory footprint (64KB-256KB max per mixer)
 
 ## Use Cases
 
@@ -121,18 +122,21 @@ Reduce variance by establishing consistent microarchitectural context:
 ```c
 // Set in your program
 for (int trial = 0; trial < 100; trial++) {
-    context_mixer_run(500000);  // Uses MIXER_INDICES from env
+    context_mixer_run();  // Uses MIXER_INDICES from env
     run_benchmark();
 }
 ```
 
 ## Implementation Details
 
-- Uses `rdtsc()` for precise timing control
-- Allocates buffers internally with sensible defaults
-- TLB thrash uses `mmap()` for large page allocations
+- Gentle perturbations with minimal overhead (microseconds typically)
+- Fixed iteration counts for fast, deterministic execution
+- Uses fixed seed (`0x123456789ABCDEFULL`) for reproducibility
+- Small buffer allocations (64KB-256KB max)
+- TLB thrash uses `mmap()` for 64 pages (256KB)
+- Alloc chaos uses real `malloc/free` for 50 small allocations (64-1024 bytes)
 - All mixers are single-threaded
-- PRNG based on xorshift64 with time-based seed
+- PRNG based on xorshift64 with deterministic seed
 - No initialization or cleanup needed - just call and go
 
 ## Testing

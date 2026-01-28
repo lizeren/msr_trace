@@ -1,13 +1,12 @@
 #include "context_mixer.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
 static void print_usage(const char* prog) {
     printf("Usage: Set MIXER_INDICES env var, then run:\n");
-    printf("  export MIXER_INDICES=1 && %s [duration_us]\n\n", prog);
+    printf("  export MIXER_INDICES=1 && %s\n\n", prog);
     printf("Mixer types:\n");
     printf("  1 - LLC Thrash (cache-cold)\n");
     printf("  2 - L1D Hot (cache-hot baseline)\n");
@@ -18,10 +17,10 @@ static void print_usage(const char* prog) {
     printf("  7 - Memory mixed (stream + random)\n");
     printf("  8 - Alloc chaos\n");
     printf("\nExample:\n");
-    printf("  export MIXER_INDICES=1 && %s 500000\n", prog);
-    printf("  (Run LLC thrash for 500ms)\n\n");
-    printf("  export MIXER_INDICES=4 && %s 1000000\n", prog);
-    printf("  (Run branch chaos for 1 second)\n");
+    printf("  export MIXER_INDICES=1 && %s\n", prog);
+    printf("  (Run LLC thrash)\n\n");
+    printf("  export MIXER_INDICES=4 && %s\n", prog);
+    printf("  (Run branch chaos)\n");
 }
 
 static const char* get_mixer_name(int mixer_type) {
@@ -38,17 +37,16 @@ static const char* get_mixer_name(int mixer_type) {
     }
 }
 
-static void run_mixer(size_t duration_us) {
+static void run_mixer(void) {
     const char* mixer_env = getenv("MIXER_INDICES");
     int mixer_type = mixer_env ? atoi(mixer_env) : 0;
     
-    printf("Running: %s (duration: %zu us)\n", 
-           get_mixer_name(mixer_type), duration_us);
+    printf("Running: %s\n", get_mixer_name(mixer_type));
     
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
     
-    int ret = context_mixer_run(duration_us);
+    int ret = context_mixer_run();
     
     clock_gettime(CLOCK_MONOTONIC, &end);
     
@@ -71,18 +69,12 @@ int main(int argc, char* argv[]) {
         print_usage(argv[0]);
         return 1;
     }
-    
-    size_t duration_us = 10000; // 0.01 second default
-    
-    if (argc >= 2) {
-        duration_us = (size_t)atol(argv[1]);
-    }
 
     printf("Context Mixer Example\n");
     printf("=====================\n");
     printf("MIXER_INDICES=%s\n\n", mixer_env);
 
-    run_mixer(duration_us);
+    run_mixer();
 
     printf("Done.\n");
     return 0;

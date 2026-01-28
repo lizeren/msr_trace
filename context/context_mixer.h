@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-int context_mixer_run(size_t duration_us);
+int context_mixer_run(void);
 
 #ifdef __cplusplus
 }
