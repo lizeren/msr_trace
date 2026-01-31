@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <stdint.h>
 
-#define LLC_SIZE (64 * 1024)
+#define L1D_WALKTHROUGH_SIZE (64 * 1024)
 #define L1D_SIZE (64 * 64)
 #define PAGE_SIZE 4096
 #define TLB_PAGES 64
@@ -23,17 +23,17 @@ static uint64_t xorshift64(uint64_t* state) {
     return x;
 }
 
-static void mixer_llc_thrash(void) {
-    volatile char* buffer = malloc(LLC_SIZE);
+static void mixer_l1d_walkthrough(void) {
+    volatile char* buffer = malloc(L1D_WALKTHROUGH_SIZE);
     if (!buffer) {
-        fprintf(stderr, "Failed to allocate LLC thrash buffer\n");
+        fprintf(stderr, "Failed to allocate L1D walkthrough buffer\n");
         return;
     }
 
     volatile char sink = 0;
     
     // Touch 64KB with 64-byte stride, 1 pass (1024 cache lines)
-    for (size_t i = 0; i < LLC_SIZE; i += 64) {
+    for (size_t i = 0; i < L1D_WALKTHROUGH_SIZE; i += 64) {
         sink += buffer[i];
         buffer[i] = (char)(i & 0xFF);
     }
@@ -209,7 +209,7 @@ int context_mixer_run(void) {
 
     switch (mixer_type) {
         case 1:
-            mixer_llc_thrash();
+            mixer_l1d_walkthrough();
             break;
         case 2:
             mixer_l1d_hot();

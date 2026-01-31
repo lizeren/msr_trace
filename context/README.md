@@ -6,8 +6,8 @@ A shared library for generating different microarchitectural contexts to control
 
 The Context Mixer library provides 8 different "mixers" that gently perturb various microarchitectural states with minimal overhead:
 
-1. **LLC Thrash (cache-cold)** - Touches 64KB (1K cache lines) with 1 pass
-2. **L1D Hot (cache-hot baseline)** - Touches 64 cache lines (4KB), 5 passes to keep hot in L1
+1. **L1D Walkthrough ** - Touches 64KB (1K cache lines) with 1 pass
+2. **L1D Hot ** - Touches 64 cache lines (4KB), 5 passes to keep hot in L1
 3. **Instruction-cache churn** - Calls 10 random small functions to gently perturb I-cache/BTB
 4. **Branch chaos** - 250 data-dependent branches to scramble branch predictor state
 5. **TLB thrash** - Touches 64 pages (256KB), 1 pass to stress TLB
