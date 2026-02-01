@@ -10,8 +10,8 @@ Single file with everything needed:
 - Comprehensive evaluation with balanced accuracy
 
 Note: Function filtering based on minimum samples is done during preprocessing.
-      Use preprocess_features.py with --min-samples to control which functions
-      are included in the cached data.
+    Use preprocess_features.py with --min-samples to control which functions
+    are included in the cached data.
 """
 
 import json
@@ -246,13 +246,19 @@ def main():
     
     # Split data with group-aware splitting to prevent data leakage
     if groups is not None:
-        print(f"\n✓ Using GROUP-BASED splitting (prevents data leakage)")
-        print(f"  Unique groups (files): {len(np.unique(groups))}")
-        print(f"  This ensures samples from the same file stay together")
+        print(f"\n{'='*80}")
+        print(f"GROUP-BASED SPLITTING (Prevents Data Leakage)")
+        print(f"{'='*80}\n")
+        
+        unique_groups = np.unique(groups)
+        print(f"Total unique groups (files): {len(unique_groups)}")
+        print(f"Total samples: {len(X)}")
+        print(f"Samples per group: {len(X) / len(unique_groups):.1f} (average)")
+        print(f"\nThis ensures samples from the same file stay together\n")
         
         # First split: separate out test set (15% of groups)
         gss_test = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
-        train_val_idx, test_idx = next(gss_test.split(X, y, groups))
+        train_val_idx, test_idx = next(gss_test.split(X, y_encoded, groups))
         
         X_train_val = X[train_val_idx]
         y_train_val = y_encoded[train_val_idx]
@@ -260,6 +266,7 @@ def main():
         
         X_test = X[test_idx]
         y_test = y_encoded[test_idx]
+        groups_test = groups[test_idx]
         
         # Second split: split train_val into train and val (85% train, 15% val of remaining)
         gss_val = GroupShuffleSplit(n_splits=1, test_size=0.15/0.85, random_state=42)
@@ -267,14 +274,89 @@ def main():
         
         X_train = X_train_val[train_idx]
         y_train = y_train_val[train_idx]
+        groups_train = groups_train_val[train_idx]
         
         X_val = X_train_val[val_idx]
         y_val = y_train_val[val_idx]
+        groups_val = groups_train_val[val_idx]
+        
+        # Verification: Check for data leakage
+        print(f"{'='*80}")
+        print(f"VERIFICATION: No Data Leakage")
+        print(f"{'='*80}\n")
+        
+        unique_train = set(np.unique(groups_train))
+        unique_val = set(np.unique(groups_val))
+        unique_test = set(np.unique(groups_test))
+        
+        print(f"Files in train set: {len(unique_train)}")
+        print(f"Files in val set:   {len(unique_val)}")
+        print(f"Files in test set:  {len(unique_test)}")
+        print(f"Total unique files: {len(unique_train | unique_val | unique_test)}")
+        
+        # Check for overlaps (should be empty!)
+        train_val_overlap = unique_train & unique_val
+        train_test_overlap = unique_train & unique_test
+        val_test_overlap = unique_val & unique_test
+        
+        print(f"\nChecking for leakage...")
+        if train_val_overlap:
+            print(f"  ❌ LEAKAGE DETECTED: {len(train_val_overlap)} files in both train and val!")
+            print(f"     Files: {list(train_val_overlap)[:5]}...")
+        else:
+            print(f"  ✓ Train/Val: No overlap (good!)")
+        
+        if train_test_overlap:
+            print(f"  ❌ LEAKAGE DETECTED: {len(train_test_overlap)} files in both train and test!")
+            print(f"     Files: {list(train_test_overlap)[:5]}...")
+        else:
+            print(f"  ✓ Train/Test: No overlap (good!)")
+        
+        if val_test_overlap:
+            print(f"  ❌ LEAKAGE DETECTED: {len(val_test_overlap)} files in both val and test!")
+            print(f"     Files: {list(val_test_overlap)[:5]}...")
+        else:
+            print(f"  ✓ Val/Test: No overlap (good!)")
+        
+        # Show some example files in each set
+        print(f"\nExample files in each set:")
+        print(f"  Train: {list(unique_train)[:3]}...")
+        print(f"  Val:   {list(unique_val)[:3]}...")
+        print(f"  Test:  {list(unique_test)[:3]}...")
+        
+        # Verify all samples from same file stay together
+        print(f"\nSample distribution per file:")
+        from collections import Counter
+        train_file_counts = Counter(groups_train)
+        val_file_counts = Counter(groups_val)
+        test_file_counts = Counter(groups_test)
+        
+        # Pick a random file from each set to show
+        if unique_train:
+            example_train_file = list(unique_train)[0]
+            print(f"  Example: '{example_train_file}'")
+            print(f"    - In train: {train_file_counts[example_train_file]} samples")
+            print(f"    - In val:   {val_file_counts.get(example_train_file, 0)} samples")
+            print(f"    - In test:  {test_file_counts.get(example_train_file, 0)} samples")
+            if val_file_counts.get(example_train_file, 0) == 0 and test_file_counts.get(example_train_file, 0) == 0:
+                print(f"    ✓ All samples from this file stayed in train!")
+        
+        if unique_test:
+            example_test_file = list(unique_test)[0]
+            print(f"  Example: '{example_test_file}'")
+            print(f"    - In train: {train_file_counts.get(example_test_file, 0)} samples")
+            print(f"    - In val:   {val_file_counts.get(example_test_file, 0)} samples")
+            print(f"    - In test:  {test_file_counts[example_test_file]} samples")
+            if train_file_counts.get(example_test_file, 0) == 0 and val_file_counts.get(example_test_file, 0) == 0:
+                print(f"    ✓ All samples from this file stayed in test!")
         
     else:
-        print(f"\n⚠️  Using SAMPLE-BASED splitting (may have data leakage)")
-        print(f"  WARNING: Samples from the same file may be split across train/val/test")
-        print(f"  This can lead to overoptimistic results!")
+        print(f"\n{'='*80}")
+        print(f"⚠️  SAMPLE-BASED SPLITTING (May Have Data Leakage)")
+        print(f"{'='*80}\n")
+        print(f"WARNING: Samples from the same file may be split across train/val/test")
+        print(f"This can lead to overoptimistic results!")
+        print(f"Please re-run: python3 preprocess_features.py\n")
         
         # Fall back to sample-based split
         X_train, X_temp, y_train, y_temp = train_test_split(
@@ -284,10 +366,19 @@ def main():
             X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
         )
     
-    print(f"\nData split:")
+    print(f"\n{'='*80}")
+    print(f"Data Split Summary")
+    print(f"{'='*80}")
     print(f"  Train: {len(X_train)} samples")
     print(f"  Val:   {len(X_val)} samples")
     print(f"  Test:  {len(X_test)} samples")
+    if groups is not None:
+        print(f"  Split method: GROUP-BASED (by file) ✓")
+        print(f"  Data leakage: PREVENTED ✓")
+    else:
+        print(f"  Split method: SAMPLE-BASED ⚠️")
+        print(f"  Data leakage: POSSIBLE ⚠️")
+    print(f"{'='*80}\n")
     
     # Normalize features
     mean = np.mean(X_train, axis=0)

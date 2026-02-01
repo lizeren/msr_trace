@@ -76,25 +76,31 @@ def compute_statistical_features(timestamps: List[int], sampling_period: int,
 
 
 def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16', 
-                        min_samples: int = 20):
+                        min_samples: int = 20, custom_files: List[str] = None):
     """Load JSON features, compute statistics, and cache to disk.
     
     Args:
-        features_pattern: Glob pattern for JSON feature files
+        features_pattern: Glob pattern for JSON feature files (ignored if custom_files provided)
         output_dir: Output directory for cached features
         min_samples: Minimum samples required per function (default: 20)
                     - Technical minimum: 4 (for stratified split)
                     - Statistical minimum: 20-30 (basic validity)
                     - Recommended: 50+ (reliable performance)
+        custom_files: Custom list of files to process (overrides features_pattern)
     """
     
-    files = sorted(glob.glob(features_pattern))
+    if custom_files is not None:
+        files = custom_files
+        print(f"\nUsing {len(files)} pre-selected files")
+    else:
+        files = sorted(glob.glob(features_pattern))
+        
+        if len(files) == 0:
+            print(f"❌ No files found matching: {features_pattern}")
+            return
+        
+        print(f"Found {len(files)} files")
     
-    if len(files) == 0:
-        print(f"❌ No files found matching: {features_pattern}")
-        return
-    
-    print(f"Found {len(files)} files")
     print(f"Output directory: {output_dir}")
     
     # Create output directory
@@ -391,6 +397,9 @@ def main():
                         help='Minimum samples per function (default: 20). '
                              'Functions with fewer samples will be flagged. '
                              'Recommended: 4 (technical min), 20 (statistical min), 50+ (reliable)')
+    parser.add_argument('--sample-per-pattern', type=str, default=None,
+                        help='Sample N files per pattern. Format: "pattern1:N,pattern2:N" '
+                             'Example: "rsa:500,wolfssl:500" takes 500 files containing "rsa" and 500 containing "wolfssl"')
     
     args = parser.parse_args()
     
@@ -400,9 +409,45 @@ def main():
     print(f"  Features pattern: {args.features}")
     print(f"  Output directory: {args.output}")
     print(f"  Min samples threshold: {args.min_samples}")
-    print(f"{'='*80}\n")
     
-    preprocess_and_cache(args.features, args.output, args.min_samples)
+    # Handle pattern-based sampling
+    files = sorted(glob.glob(args.features))
+    
+    if args.sample_per_pattern:
+        print(f"  Sampling mode: Per-pattern")
+        print(f"  Pattern spec: {args.sample_per_pattern}")
+        print(f"{'='*80}\n")
+        
+        # Parse pattern specification: "rsa:500,wolfssl:500"
+        pattern_specs = {}
+        for spec in args.sample_per_pattern.split(','):
+            pattern, count = spec.strip().split(':')
+            pattern_specs[pattern.strip().lower()] = int(count)
+        
+        print(f"Pattern-based file sampling:")
+        selected_files = []
+        
+        for pattern, max_count in pattern_specs.items():
+            # Find files matching this pattern
+            matching = [f for f in files if pattern in os.path.basename(f).lower()]
+            sampled = matching[:max_count]
+            selected_files.extend(sampled)
+            
+            print(f"  '{pattern}': Found {len(matching)} files, selected {len(sampled)}")
+        
+        files = selected_files
+        print(f"\nTotal files to process: {len(files)}")
+        
+        if len(files) == 0:
+            print(f"❌ No files matched the patterns!")
+            return 1
+    else:
+        print(f"{'='*80}\n")
+        print(f"Processing all {len(files)} files")
+    
+    preprocess_and_cache(args.features if not args.sample_per_pattern else None, 
+                        args.output, args.min_samples, 
+                        custom_files=files if args.sample_per_pattern else None)
     
     return 0
 
