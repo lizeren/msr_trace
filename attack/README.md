@@ -13,12 +13,13 @@ The vulnerable program is **nearly identical** to the normal program, with only 
 ## Programs
 
 ### 1. `normal_program.c` - Secure Implementation
-Five functions with proper security measures:
+Six functions with proper security measures:
 - Function 1: String processing with bounds checking
 - Function 2: Array access with index validation  
 - Function 3: Memory allocation with size validation
 - Function 4: File path handling with length validation
 - Function 5: Integer parsing with character validation
+- Function 6: Block processor with pointer advancement (like OpenSSL OCB128)
 
 ### 2. `vulnerable_program.c` - Attack Gadgets (Security Checks Removed)
 **Identical structure** but with validation removed:
@@ -85,6 +86,23 @@ Five functions with proper security measures:
 ```
 **Impact**: Without validation, NULL pointer or invalid characters can cause undefined behavior or incorrect parsing.
 
+#### Function 6: Block Processing - Missing Pointer Advancement (OpenSSL-like)
+```diff
+  if (num_blocks > 0) {
+      size_t max_idx = 0, top = all_num_blocks;
++     size_t processed_bytes = 0;  // ADDED in secure version
+      
+      // ... process blocks ...
+      
++     // REMOVED in vulnerable version - causes data corruption
+-     processed_bytes = num_blocks * 16;
+-     in += processed_bytes;
+-     out += processed_bytes;
+-     len -= processed_bytes;
+  }
+```
+**Impact**: Without pointer advancement, the function re-processes the same data when handling remaining bytes, causing data corruption. This mirrors CVE-2016-2107 in OpenSSL's OCB128 implementation.
+
 ## Compilation
 
 ```bash
@@ -134,8 +152,9 @@ make test_vulnerable
 | Function 3 | 4 lines removed (size validation + length check) |
 | Function 4 | 3 lines removed (length check) |
 | Function 5 | 9 lines removed (null check + character validation) |
+| Function 6 | 4 lines removed (pointer advancement after block processing) |
 | Architecture | Return values for error handling (0 = success, -1 = fail) |
-| **Total** | **~27 lines of validation removed** |
+| **Total** | **~31 lines of critical code removed** |
 
 ## Exploitation Examples
 
@@ -160,14 +179,34 @@ array_processor(test_data, 100, 50);  // Reads beyond array bounds
 memory_allocator(4, "This string is much longer than 4 bytes");
 ```
 
+### Example 4: Data Corruption via Missing Pointer Update (Function 6)
+```c
+// Vulnerable version will re-process first block when handling remainder
+// because pointers weren't advanced after block processing
+unsigned char input[50] = "Block1Block2Block3Remainder";  // 27 bytes
+unsigned char output[50] = {0};
+block_processor(input, output, 50);
+// Result: Corrupted output due to overlapping operations
+```
+
+## Real-World Vulnerability Pattern
+
+**Function 6** is inspired by a real OpenSSL vulnerability (CVE-2016-2107):
+- **Original bug**: `CRYPTO_ocb128_encrypt()` missing pointer advancement after processing blocks
+- **Impact**: Data corruption in OCB128 authenticated encryption
+- **Fix**: Added 3 lines to track `processed_bytes` and advance `in`/`out` pointers
+- **Our implementation**: Simplified version demonstrating the same missing-pointer-update pattern
+
+This shows how even mature crypto libraries can have subtle bugs where forgetting to update pointers causes serious issues.
+
 ## Educational Purpose
 
 This demonstrates that:
 
-1. **Small changes = Big impact**: Removing ~40 lines creates multiple serious vulnerabilities
-2. **Minimal differences**: Easy to compare with diff tools
-3. **Real-world relevance**: Missing validation is a common vulnerability pattern
-4. **Defense importance**: Every check serves a purpose
+1. **Small changes = Big impact**: Removing ~31 lines creates 6 serious vulnerabilities
+2. **Minimal differences**: Easy to compare with diff tools - only validation code removed
+3. **Real-world relevance**: Function 6 mirrors actual OpenSSL CVE; others are common patterns
+4. **Defense importance**: Every validation check and pointer update serves a critical purpose
 
 ## Comparing the Programs
 
@@ -189,7 +228,9 @@ diff normal_program.c vulnerable_program.c | grep "^[<>]" | wc -l
 
 ## References
 
+- **CVE-2016-2107**: OpenSSL OCB128 encryption padding oracle (Function 6 inspiration)
 - OWASP Buffer Overflow: https://owasp.org/www-community/vulnerabilities/Buffer_Overflow
 - CWE-119: Improper Restriction of Operations within Memory Bounds
 - CWE-120: Buffer Copy without Checking Size of Input
+- CWE-823: Use of Out-of-bounds Pointer (Function 6 pattern)
 - Secure Coding: https://wiki.sei.cmu.edu/confluence/display/c/SEI+CERT+C+Coding+Standard

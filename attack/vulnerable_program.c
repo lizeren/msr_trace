@@ -105,6 +105,55 @@ int parse_integer(const char* str, int* result) {
     return 0;
 }
 
+/*
+ * Function 6: VULNERABLE Block Processor - POINTER ADVANCEMENT MISSING
+ * Same as normal but missing pointer updates after processing blocks
+ */
+int block_processor(const unsigned char* in, unsigned char* out, size_t len) {
+    size_t num_blocks, last_len;
+    size_t all_num_blocks;
+    
+    // Calculate number of complete 16-byte blocks
+    num_blocks = len / 16;
+    all_num_blocks = num_blocks;
+    
+    if (num_blocks > 0) {
+        size_t max_idx = 0, top = all_num_blocks;
+        
+        // Calculate index for processing
+        while (top >>= 1)
+            max_idx++;
+        
+        if (max_idx > 64) {
+            return -1;
+        }
+        
+        // Process complete blocks
+        for (size_t i = 0; i < num_blocks; i++) {
+            for (size_t j = 0; j < 16; j++) {
+                out[j] = in[j] ^ 0xAA;  // Simple XOR operation
+            }
+        }
+        
+        // REMOVED: Pointer advancement - causes data corruption
+        // processed_bytes = num_blocks * 16;
+        // in += processed_bytes;
+        // out += processed_bytes;
+        // len -= processed_bytes;
+    }
+    
+    // Handle remaining bytes (less than one block)
+    last_len = len % 16;
+    if (last_len > 0) {
+        for (size_t i = 0; i < last_len; i++) {
+            out[i] = in[i] ^ 0xAA;
+        }
+    }
+    
+    printf("[Function 6] Processed %zu blocks + %zu bytes\n", num_blocks, last_len);
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     printf("=== Vulnerable Program - Security Checks Removed ===\n");
     printf("WARNING: This program contains intentional vulnerabilities!\n\n");
@@ -134,6 +183,13 @@ int main(int argc, char* argv[]) {
     int value;
     if (parse_integer("12345", &value) != 0) {
         printf("[Function 5] Error: Parse validation failed\n");
+    }
+    
+    printf("\nTesting Function 6 (Block Processor):\n");
+    unsigned char input[48] = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLL";
+    unsigned char output[48] = {0};
+    if (block_processor(input, output, 48) != 0) {
+        printf("[Function 6] Error: Block processing failed\n");
     }
     
     printf("\n=== Program completed (vulnerabilities present!) ===\n");
