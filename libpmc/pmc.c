@@ -207,15 +207,38 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
         attr.config = config->event_number | ((uint64_t)config->umask << 8);
     } else {
         // Generic hardware events (uses fixed counters: IA32_FIXED_CTR0/1/2)
+        // Intel fixed counters:
+        //   Fixed Counter 0: INST_RETIRED.ANY (EventCode=0x00, UMask=0x01)
+        //   Fixed Counter 1: CPU_CLK_UNHALTED.THREAD (EventCode=0x00, UMask=0x02)
+        //   Fixed Counter 2: CPU_CLK_UNHALTED.REF_TSC (EventCode=0x00, UMask=0x03)
         attr.type = PERF_TYPE_HARDWARE;
-        if(config->event_number == 0x3C) {
-            attr.config = PERF_COUNT_HW_CPU_CYCLES;
-        } else if(config->event_number == 0xC0) {
+        
+        // Map based on event name for fixed counters
+        if (strstr(config->event, "INST_RETIRED") || 
+            strstr(config->event, "INSTRUCTIONS")) {
+            // Fixed Counter 0: Instructions retired
             attr.config = PERF_COUNT_HW_INSTRUCTIONS;
+        } else if (strstr(config->event, "CPU_CLK_UNHALTED") || 
+                   strstr(config->event, "CPU_CYCLES") ||
+                   strstr(config->event, "UNHALTED")) {
+            // Fixed Counter 1: CPU cycles
+            attr.config = PERF_COUNT_HW_CPU_CYCLES;
+        } else if (strstr(config->event, "REF_CYCLES") ||
+                   strstr(config->event, "REF_TSC")) {
+            // Fixed Counter 2: Reference cycles
+            attr.config = PERF_COUNT_HW_REF_CPU_CYCLES;
         } else {
-            pmc_set_error("Unknown event number: %x", config->event_number);
-            free(ctx);
-            return NULL;
+            // Fallback: try legacy event number mapping
+            if (config->event_number == 0x3C) {
+                attr.config = PERF_COUNT_HW_CPU_CYCLES;
+            } else if (config->event_number == 0xC0) {
+                attr.config = PERF_COUNT_HW_INSTRUCTIONS;
+            } else {
+                pmc_set_error("Unknown fixed counter event: %s (event_number=0x%x)", 
+                             config->event, config->event_number);
+                free(ctx);
+                return NULL;
+            }
         }
     }
 
