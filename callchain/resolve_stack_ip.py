@@ -4,84 +4,10 @@ import subprocess
 from pathlib import Path
 
 
-PID = 694760
-ADDR = 0x7f1348a33c9b
+PID = 177970
+ADDR = 0x7fe8e5d11791
 
 
-
-
-
-
-
-# === HIT ossl_ess_get_signing_cert pid=694760 tid=694760 comm=openssl ===
-# CVE-2026-22796
-#         parse_bag+0
-#         0x7f1348a33c9b
-#         0x7f1348a339c6
-#         0x7f1348aaa1e2
-#         0x7f1348aa90b0
-#         0x7f1348bc9071
-#         0x7f13488c86a2
-#         0x7f1348bca3b1
-#         0x7f1348bca4e2
-#         0x7f13488c8ce0
-#         0x7f13488c688b
-#         0x7f1348bc96b6
-#         0x7f1348bc9c8e
-#         0x7f1348aa5382
-#         0x55adef894b1e
-#         0x55adef89313d
-#         0x55adef88e942
-#         0x55adef847b99
-#         0x55adef84770d
-#         0x7f13484a4d90
-
-
-
-
-
-
-
-
-# === HIT ossl_ess_get_signing_cert pid=661484 tid=661484 comm=openssl ===
-# CVE-2025-69420
-#         ossl_ess_get_signing_cert+0
-#         0x7fb06f4f1503
-#         0x7fb06f4f1ae0
-#         0x7fb06f4f19bb
-#         0x563fb75cd3f8
-#         0x563fb75cbe0d
-#         0x563fb7589b99
-#         0x563fb758970d
-#         0x7fb06eee3d90
-
-
-# === HIT CRYPTO_ocb128_encrypt pid=502710 tid=502710 comm=evp_test ===
-# CVE-2025-69418
-#         CRYPTO_ocb128_encrypt+0
-#         0x7fd924ac5f0d
-#         0x7fd92489e791
-#         0x7fd92489ddd4
-#         0x55875fe9ce18
-#         0x55875fe9db55
-#         0x55875fea9850
-#         0x55875feaab3d
-#         0x55875feae513
-#         0x55875feaf073
-#         0x7fd92444dd90
-
-
-# =========================
-# CONFIG (EDIT THESE)
-# =========================
-# CVE-2025-11187
-# PID = 386944
-# ADDR = 0x7f39c8a761cb
-# ADDR = 0x555e94a7aeb3
-# ADDR = 0x555e94a75b99
-# ADDR = 0x555e94a7570d
-# ADDR = 0x7f39c84e5d90
-# =========================
 
 
 MAPS_PATH = Path(f"/tmp/maps.{PID}")

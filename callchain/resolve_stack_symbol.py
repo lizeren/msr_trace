@@ -12,40 +12,6 @@ Edit only:
 - SYMBOL_OFFSET
 """
 
-
-
-
-
-"""
-=== HIT wc_ChaCha20Poly1305_Encrypt pid=29326 tid=29326 comm=testsuite.test ===
-CVE-2025-11931
-
-        wc_ChaCha20Poly1305_Encrypt+0
-        wolfcrypt_test+2092
-        testsuite_test+271
-        main+36
-        __libc_start_call_main+128
-
-
-
-=== HIT DoTls13CertificateVerify pid=32717 tid=32717 comm=testsuite.test ===
-CVE-2025-11934
-
-        DoTls13CertificateVerify+0
-        DoTls13HandShakeMsg+663
-        DoProcessReplyEx+2271
-        ProcessReplyEx+36
-        ProcessReply+33
-        wolfSSL_connect_TLSv13+730
-        wolfSSL_connect+621
-        echoclient_test+668
-        test_tls+277
-        testsuite_test+483
-        main+36
-        __libc_start_call_main+128
-"""
-
-
 import re
 import subprocess
 from pathlib import Path
