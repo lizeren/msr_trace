@@ -25,6 +25,8 @@ To build and run wrapped rsa_test.c
 ```bash
 # at root directory of openssl
 make test/rsa_test EX_LIBS="-L.. -lpmc -ldl -pthread"
+# if use context mixer
+make test/rsa_test EX_LIBS="-L.. -lpmc -ldl -pthread -lcontext_mixer"
 # or at openssl root
 make test/rsa_test EX_LIBS="-L/mnt/linuxstorage/openssl -lpmc -ldl -pthread"
 # if use gcc plugin instrumentation
@@ -45,19 +47,11 @@ export PMC_EVENT_INDICES="0,1,2,3" && ./test/rsa_test
 #python collector to run test/rsa_test.c 5 times and save the average results
 python3 collect_pmc_features.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 > result.log
 
-# ================================
-# below are commands for testing purposes. I don't think you will need them.
-# =================================
-# at directory of test files
-export PMC_EVENT_INDICES="0,1,2,3" && ./rsa_test
-#train classifier
-python3 train_classifier.py --features "features/pmc_features_*.json" > logistic.log
-#xgboost classifier
-python3 train_xgboost.py --features "features/pmc_features_*.json" > xgboost.log
-# save the model
-python3 train_classifier.py --features "features/pmc_features_*.json" --save-model
-# inference
-python3 inference.py --model models/pmc_classifier.pkl --features ../libpmc/pmc_features_1_unseen.json --output predictions.json
+# with context mixer
+make test/rsa_test EX_LIBS="-L.. -lpmc -ldl -pthread -lcontext_mixer"
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH" # if libpmc.so is in the root directory of openssl
+export PMC_EVENT_INDICES="0,1,2,3" MIXER_INDICES=1 && ./test/rsa_test
+python3 collect_pmc_features_mixer.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 > result.log
 ```
 
 Result json file has the name of pmc_results.json.
@@ -89,6 +83,16 @@ make test/http_test EX_LIBS="-L.. -lpmc -ldl -pthread"
 # at directory of test files
 python3 collect_pmc_features.py --target "./http_test certs/ca-cert.pem" --runs 5 --total 10 --name http --start 1 > result.log
 
+
+
+# temp: compile variant
+make test/http_test_variant EX_LIBS="-L.. -lpmc -ldl -pthread"
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH" # if libpmc.so is in the root directory of openssl
+python3 collect_pmc_features.py --target "./http_test_variant certs/ca-cert.pem" --runs 5 --total 1 --name http_variant --start 1 > result.log
+
+
+# with context mixer
+make test/http_test EX_LIBS="-L.. -lpmc -ldl -pthread -lcontext_mixer"
 ```
 
 `OSSL_HTTP_parse_url`
@@ -108,6 +112,14 @@ make test/slh_dsa_test EX_LIBS="-L.. -lpmc -ldl -pthread"
 ./test/slh_dsa_test 
 # at directory of test files
 python3 collect_pmc_features.py --target "./slh_dsa_test" --runs 5 --total 10 --name slh_dsa --start 1 > result.log
+
+
+
+
+# temp: compile variant
+make test/slh_dsa_test_variant EX_LIBS="-L.. -lpmc -ldl -pthread"
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH" # if libpmc.so is in the root directory of openssl
+python3 collect_pmc_features.py --target "./slh_dsa_test_variant" --runs 5 --total 1 --name slh_dsa_variant --start 1 > result.log
 ```
 
 `EVP_PKEY_CTX_new_from_name`
@@ -122,3 +134,25 @@ python3 collect_pmc_features.py --target "./slh_dsa_test" --runs 5 --total 10 --
 `EVP_PKEY_generate`
 `EVP_PKEY_free`
 `EVP_PKEY_CTX_free`
+
+
+
+
+## Static lib version of OpenSSL
+
+```bash
+./Configure linux-x86_64 no-shared
+make
+```
+
+
+## Trick
+
+If the test program has already called to libpmc/context mixer, we need to compile the openssl in the following order:
+
+```bash
+make
+# make will stop complaining about the missing -lpmc and -lcontext_mixer
+# build the rest with -lpmc and -lcontext_mixer
+make EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
+```
