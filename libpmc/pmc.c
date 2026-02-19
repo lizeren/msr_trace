@@ -55,6 +55,31 @@ static int add_measured_label(const char *label) {
     return 0;
 }
 
+// ===== Debug logging =====
+static int pmc_debug_enabled = -1;  // -1 = uninitialized, 0 = disabled, 1 = enabled
+
+static void pmc_debug_init(void) {
+    if (pmc_debug_enabled == -1) {
+        const char *debug = getenv("PMC_DEBUG");
+        pmc_debug_enabled = (debug && atoi(debug) > 0) ? 1 : 0;
+        if (pmc_debug_enabled) {
+            fprintf(stderr, "[PMC DEBUG] Debug mode enabled\n");
+        }
+    }
+}
+
+static void pmc_debug(const char *fmt, ...) {
+    pmc_debug_init();
+    if (!pmc_debug_enabled) return;
+    
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "[PMC DEBUG] ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+
 // ===== Thread-local error handling =====
 static __thread char pmc_error_buf[256] = {0};
 
@@ -180,6 +205,8 @@ pmc_config_t pmc_get_default_config(const char *event_name, pmc_mode_t mode, uin
 }
 
 pmc_ctx_t* pmc_create(const pmc_config_t *config) {
+    pmc_debug("Creating PMC context for event: %s", config ? config->event : "NULL");
+    
     if (!config) {
         pmc_set_error("NULL configuration");
         return NULL;
@@ -203,32 +230,40 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
     
     if (config->is_raw) {
         // Raw PMU events (programmable counters)
+        pmc_debug("  Type: RAW PMU event, event_number=0x%x, umask=0x%x", 
+                  config->event_number, config->umask);
         attr.type = PERF_TYPE_RAW;
         attr.config = config->event_number | ((uint64_t)config->umask << 8);
+        pmc_debug("  attr.config=0x%llx", (unsigned long long)attr.config);
     } else {
         // Generic hardware events (uses fixed counters: IA32_FIXED_CTR0/1/2)
         // Intel fixed counters:
         //   Fixed Counter 0: INST_RETIRED.ANY (EventCode=0x00, UMask=0x01)
         //   Fixed Counter 1: CPU_CLK_UNHALTED.THREAD (EventCode=0x00, UMask=0x02)
         //   Fixed Counter 2: CPU_CLK_UNHALTED.REF_TSC (EventCode=0x00, UMask=0x03)
+        pmc_debug("  Type: FIXED COUNTER");
         attr.type = PERF_TYPE_HARDWARE;
         
         // Map based on event name for fixed counters
         if (strstr(config->event, "INST_RETIRED") || 
             strstr(config->event, "INSTRUCTIONS")) {
             // Fixed Counter 0: Instructions retired
+            pmc_debug("  Mapped to PERF_COUNT_HW_INSTRUCTIONS");
             attr.config = PERF_COUNT_HW_INSTRUCTIONS;
         } else if (strstr(config->event, "CPU_CLK_UNHALTED") || 
                    strstr(config->event, "CPU_CYCLES") ||
                    strstr(config->event, "UNHALTED")) {
             // Fixed Counter 1: CPU cycles
+            pmc_debug("  Mapped to PERF_COUNT_HW_CPU_CYCLES");
             attr.config = PERF_COUNT_HW_CPU_CYCLES;
         } else if (strstr(config->event, "REF_CYCLES") ||
                    strstr(config->event, "REF_TSC")) {
             // Fixed Counter 2: Reference cycles
+            pmc_debug("  Mapped to PERF_COUNT_HW_REF_CPU_CYCLES");
             attr.config = PERF_COUNT_HW_REF_CPU_CYCLES;
         } else {
             // Fallback: try legacy event number mapping
+            pmc_debug("  Using legacy event_number mapping: 0x%x", config->event_number);
             if (config->event_number == 0x3C) {
                 attr.config = PERF_COUNT_HW_CPU_CYCLES;
             } else if (config->event_number == 0xC0) {
@@ -241,6 +276,11 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
             }
         }
     }
+
+    pmc_debug("  Mode: %d, sample_period: %llu", config->mode, 
+              (unsigned long long)config->sample_period);
+    pmc_debug("  exclude_kernel: %d, exclude_hv: %d, precise_ip: %d", 
+              config->exclude_kernel, config->exclude_hv, config->precise_ip);
 
     attr.disabled = 1;
     attr.exclude_kernel = config->exclude_kernel;
@@ -266,14 +306,18 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
     }
 
     // Open perf event
+    pmc_debug("  Calling perf_event_open()...");
     ctx->fd = perf_event_open(&attr, 0, -1, -1, 0);
     if (ctx->fd == -1) {
+        pmc_debug("  ERROR: perf_event_open failed: %s (errno=%d)", strerror(errno), errno);
         pmc_set_error("perf_event_open failed: %s (errno=%d). "
                      "Tip: check perf_event_paranoid or CAP_SYS_ADMIN.", 
                      strerror(errno), errno);
         free(ctx);
         return NULL;
     }
+
+    pmc_debug("  Success! fd=%d", ctx->fd);
 
     // Setup ring buffer for sampling modes
     if (config->mode == PMC_MODE_SAMPLING || config->mode == PMC_MODE_SAMPLING_FREQ) {
@@ -289,37 +333,46 @@ pmc_ctx_t* pmc_create(const pmc_config_t *config) {
 }
 
 int pmc_start(pmc_ctx_t *ctx) {
+    pmc_debug("Starting PMC measurement");
+    
     if (!ctx || ctx->fd == -1) {
         pmc_set_error("Invalid context");
         return -1;
     }
 
     if (ioctl(ctx->fd, PERF_EVENT_IOC_RESET, 0) == -1) {
+        pmc_debug("  PERF_EVENT_IOC_RESET failed: %s", strerror(errno));
         pmc_set_error("PERF_EVENT_IOC_RESET failed: %s", strerror(errno));
         return -1;
     }
 
     if (ioctl(ctx->fd, PERF_EVENT_IOC_ENABLE, 0) == -1) {
+        pmc_debug("  PERF_EVENT_IOC_ENABLE failed: %s", strerror(errno));
         pmc_set_error("PERF_EVENT_IOC_ENABLE failed: %s", strerror(errno));
         return -1;
     }
 
     ctx->is_started = 1;
+    pmc_debug("  PMC started successfully");
     return 0;
 }
 
 int pmc_stop(pmc_ctx_t *ctx) {
+    pmc_debug("Stopping PMC measurement");
+    
     if (!ctx || ctx->fd == -1) {
         pmc_set_error("Invalid context");
         return -1;
     }
 
     if (ioctl(ctx->fd, PERF_EVENT_IOC_DISABLE, 0) == -1) {
+        pmc_debug("  PERF_EVENT_IOC_DISABLE failed: %s", strerror(errno));
         pmc_set_error("PERF_EVENT_IOC_DISABLE failed: %s", strerror(errno));
         return -1;
     }
 
     ctx->is_started = 0;
+    pmc_debug("  PMC stopped successfully");
     return 0;
 }
 
@@ -761,27 +814,37 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
                                                        const pmc_event_request_t *events,
                                                        size_t num_events,
                                                        int should_free_events) {
+    pmc_debug("Beginning measurement for label: %s", label);
+    pmc_debug("  Number of events: %zu", num_events);
+    
     if (!label || !events || num_events == 0) {
         pmc_set_error("Invalid parameters to pmc_measure_begin");
+        pmc_debug("  ERROR: Invalid parameters (label=%p, events=%p, num_events=%zu)", 
+                  (void*)label, (void*)events, num_events);
         return NULL;
     }
     
     // Check if this label has already been measured
     if (is_label_measured(label)) {
         fprintf(stderr, "PMC: Label '%s' already measured, skipping.\n", label);
+        pmc_debug("  Label already measured, skipping");
         return NULL;  // Events are cached, don't free
     }
     
     // Add label to tracking
     if (add_measured_label(label) != 0) {
         pmc_set_error("Too many measurement labels (max %d)", MAX_LABELS);
+        pmc_debug("  ERROR: Too many labels");
         return NULL;
     }
+    
+    pmc_debug("  Label added to tracking");
     
     // Allocate multi-handle
     pmc_multi_handle_t *handle = calloc(1, sizeof(pmc_multi_handle_t));
     if (!handle) {
         pmc_set_error("Failed to allocate multi-handle");
+        pmc_debug("  ERROR: Failed to allocate multi-handle");
         return NULL;
     }
     
@@ -795,6 +858,7 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
     
     if (!handle->contexts || !handle->requests) {
         pmc_set_error("Failed to allocate arrays");
+        pmc_debug("  ERROR: Failed to allocate arrays");
         free(handle->contexts);
         free(handle->requests);
         free(handle);
@@ -804,8 +868,12 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
     // Copy requests (shallow copy - event pointers point to cached strings)
     memcpy(handle->requests, events, num_events * sizeof(pmc_event_request_t));
     
+    pmc_debug("  Creating individual PMC contexts");
+    
     // Create individual PMC contexts for each event
     for (size_t i = 0; i < num_events; i++) {
+        pmc_debug("    Event %zu: %s", i, handle->requests[i].event);
+        
         pmc_config_t config = pmc_get_default_config(
             handle->requests[i].event,
             handle->requests[i].mode,
@@ -818,6 +886,7 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
         
         handle->contexts[i] = pmc_create(&config);
         if (!handle->contexts[i]) {
+            pmc_debug("    ERROR: Failed to create context for event %zu", i);
             // Cleanup on failure
             for (size_t j = 0; j < i; j++) {
                 if (handle->contexts[j]) {
@@ -831,16 +900,20 @@ static pmc_multi_handle_t* pmc_measure_begin_internal(const char *label,
         }
     }
     
+    pmc_debug("  Starting all measurements");
+    
     // Start all measurements
     for (size_t i = 0; i < num_events; i++) {
         if (pmc_start(handle->contexts[i]) != 0) {
             // Continue with other events even if one fails
             fprintf(stderr, "Warning: Failed to start event %s\n", 
                     handle->requests[i].event);
+            pmc_debug("    WARNING: Failed to start event %zu: %s", i, handle->requests[i].event);
         }
     }
     
     handle->all_started = 1;
+    pmc_debug("  Measurement started successfully");
     return handle;
 }
 
@@ -872,10 +945,13 @@ pmc_multi_handle_t* pmc_measure_begin_csv(const char *label, const char *csv_pat
 }
 
 void pmc_measure_end(pmc_multi_handle_t *handle, int report) {
+    pmc_debug("Ending measurement for label: %s", handle ? handle->label : "NULL");
+    
     if (!handle) return;
     
     // Stop all measurements
     if (handle->all_started) {
+        pmc_debug("  Stopping %zu events", handle->num_events);
         for (size_t i = 0; i < handle->num_events; i++) {
             if (handle->contexts[i]) {
                 pmc_stop(handle->contexts[i]);
@@ -885,17 +961,29 @@ void pmc_measure_end(pmc_multi_handle_t *handle, int report) {
     
     // Report if requested
     if (report) {
+        pmc_debug("  Report requested (report=%d)", report);
+        
         // Check for custom output filename
         const char *output_file = getenv("PMC_OUTPUT_FILE");
         if (!output_file) {
             output_file = "pmc_results.json";
         }
         
-        pmc_export_json(handle, output_file);  // Export first to capture samples
+        pmc_debug("  Output file: %s", output_file);
+        
+        int export_result = pmc_export_json(handle, output_file);
+        if (export_result == 0) {
+            pmc_debug("  JSON export succeeded");
+        } else {
+            pmc_debug("  JSON export FAILED!");
+        }
         // pmc_report_all(handle);  // Report second (consumes samples from ring buffer)
+    } else {
+        pmc_debug("  No report requested (report=%d)", report);
     }
     
     // Cleanup
+    pmc_debug("  Cleaning up contexts");
     for (size_t i = 0; i < handle->num_events; i++) {
         if (handle->contexts[i]) {
             pmc_destroy(handle->contexts[i]);
@@ -906,6 +994,7 @@ void pmc_measure_end(pmc_multi_handle_t *handle, int report) {
     free(handle->contexts);
     free(handle->requests);
     free(handle);
+    pmc_debug("  Measurement ended and cleaned up");
 }
 
 void pmc_report_all(pmc_multi_handle_t *handle) {
@@ -1168,30 +1257,45 @@ static void write_measurement_json(FILE *fp, pmc_multi_handle_t *handle, int ind
 }
 
 int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
+    pmc_debug("Exporting JSON to: %s", json_path);
+    
     if (!handle || !json_path) {
         pmc_set_error("Invalid parameters");
+        pmc_debug("  ERROR: Invalid parameters (handle=%p, json_path=%p)", 
+                  (void*)handle, (void*)json_path);
         return -1;
     }
+    
+    pmc_debug("  Label: %s", handle->label);
+    pmc_debug("  Number of events: %zu", handle->num_events);
     
     // Check if file exists and read existing measurements
     size_t existing_size = 0;
     char *existing_content = read_entire_file(json_path, &existing_size);
     int has_existing = (existing_content != NULL && existing_size > 0);
     
+    pmc_debug("  Existing file: %s (size=%zu)", has_existing ? "yes" : "no", existing_size);
+    
     // Open file for writing
     FILE *fp = fopen(json_path, "w");
     if (!fp) {
         pmc_set_error("Failed to open JSON file: %s", strerror(errno));
+        pmc_debug("  ERROR: Failed to open file for writing: %s (errno=%d)", 
+                  strerror(errno), errno);
         free(existing_content);
         return -1;
     }
     
+    pmc_debug("  File opened successfully for writing");
+    
     // Write file header
+    pmc_debug("  Writing JSON header");
     fprintf(fp, "{\n");
     fprintf(fp, "  \"measurements\": [\n");
     
     // If existing measurements, extract and write them first
     if (has_existing) {
+        pmc_debug("  Processing existing measurements");
         // Find the start of measurements array
         char *measurements_start = strstr(existing_content, "\"measurements\"");
         if (measurements_start) {
@@ -1220,24 +1324,38 @@ int pmc_export_json(pmc_multi_handle_t *handle, const char *json_path) {
                     
                     // Write existing measurements if not empty
                     if (content_len > 0) {
+                        pmc_debug("  Appending %zu bytes of existing content", content_len);
                         fwrite(array_start, 1, content_len, fp);
                         fprintf(fp, ",\n");
+                    } else {
+                        pmc_debug("  Existing content is empty");
                     }
+                } else {
+                    pmc_debug("  Could not find array end bracket");
                 }
+            } else {
+                pmc_debug("  Could not find array start bracket");
             }
+        } else {
+            pmc_debug("  Could not find measurements array in existing file");
         }
     }
     
     // Write new measurement
+    pmc_debug("  Writing new measurement data");
     write_measurement_json(fp, handle, 0);
     fprintf(fp, "\n");
     
     // Write file footer
+    pmc_debug("  Writing JSON footer");
     fprintf(fp, "  ]\n");
     fprintf(fp, "}\n");
     
     fclose(fp);
+    pmc_debug("  File closed successfully");
     free(existing_content);
+    
+    pmc_debug("  JSON export completed: %s", json_path);
     return 0;
 }
 
