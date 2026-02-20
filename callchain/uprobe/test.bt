@@ -1,0 +1,22 @@
+// # Terminal 1 - start bpftrace first
+// sudo bpftrace --unsafe test.bt
+
+// # Terminal 2 - trigger via wrapper
+// cd /mnt/linuxstorage/openssl && /home/lizeren/Desktop/msr_trace/callchain/uprobe/run_openssl.sh
+
+uprobe:/mnt/linuxstorage/openssl/libcrypto.so:0x23f7da
+{
+  printf("=== HIT evp_cipher_get_asn1_aead_params pid=%d tid=%d comm=%s ===\n", pid, tid, comm);
+
+  // Print the runtime address of the probe hit.
+  // libcrypto.so load base = probe_runtime_addr - elf_offset (0x23f7da)
+  // e.g. if probe_runtime_addr=0x7f289b3d97da then base=0x7f289b3d97da-0x23f7da=0x7f289b1b0000
+  printf("probe_runtime_addr=0x%lx elf_offset=0x23f7da\n", reg("ip"));
+
+  // Print raw stack for offline symbolization
+  print(ustack(30));
+
+  // Remove exit() if you want to keep capturing more hits
+  exit();
+}
+
