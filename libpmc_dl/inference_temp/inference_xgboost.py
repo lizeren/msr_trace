@@ -81,29 +81,46 @@ def compute_statistical_features(timestamps: List[int], sampling_period: int,
     return np.array(features, dtype=np.float32)
 
 
-def extract_features_from_json(json_file: str) -> tuple:
+def extract_features_from_json(json_file: str, num_features: int = None) -> tuple:
     """
     Extract features from a JSON file.
-    
+
+    Args:
+        json_file:    Path to the JSON feature file.
+        num_features: Expected total number of features (features_per_event * num_events).
+                      When provided the output is padded / truncated to exactly this length.
+                      When None the output length equals the number of events actually present
+                      in the file multiplied by FEATURES_PER_EVENT (16).
+
     Returns:
-        (features_array, workload_names): features shape [N, 608], list of workload names
+        (features_array, workload_names): features shape [N, num_features], list of workload names
     """
+    FEATURES_PER_EVENT = 16
+
     with open(json_file, 'r') as f:
         data = json.load(f)
-    
+
+    # Determine the maximum number of events across all workloads in this file
+    # so every sample gets the same length vector when num_features is not given.
+    if num_features is None:
+        max_events_in_file = max(
+            len(events) for events in data.values()
+        ) if data else 0
+        num_features = max_events_in_file * FEATURES_PER_EVENT
+
     samples = []
     workload_names = []
-    
+
     for workload_label, events in data.items():
         # Process into statistical features
         event_features = []
         event_keys = sorted(events.keys(), key=lambda x: int(x.split('_')[1]))
-        
+
         for event_key in event_keys:
             event_data = events[event_key]
             timestamps = event_data.get('timestamps_ns', [])
             sampling_period = event_data.get('sampling_period', 100)
-            
+
             # Get all stats (these are always available in the JSON)
             stats_dict = event_data.get('stats', {})
             total_count_mean = stats_dict.get('total_count_mean', 0.0)
@@ -112,7 +129,7 @@ def extract_features_from_json(json_file: str) -> tuple:
             duration_std_ns = stats_dict.get('duration_std_ns', 0.0)
             num_samples_mean = stats_dict.get('num_samples_mean', 0.0)
             num_samples_std = stats_dict.get('num_samples_std', 0.0)
-            
+
             # Compute 16 features per event
             stats = compute_statistical_features(
                 timestamps, sampling_period,
@@ -120,15 +137,15 @@ def extract_features_from_json(json_file: str) -> tuple:
                 duration_mean_ns, duration_std_ns,
                 num_samples_mean, num_samples_std
             )
-            event_features.extend(stats)  # Flatten: 38 events * 16 features = 608 features
-        
-        # Ensure exactly 38 events (pad if needed)
-        while len(event_features) < 608:  # 38 * 16
-            event_features.extend(np.zeros(16, dtype=np.float32))
-        
-        samples.append(np.array(event_features[:608], dtype=np.float32))
+            event_features.extend(stats)
+
+        # Pad with zeros if this workload has fewer events than expected
+        while len(event_features) < num_features:
+            event_features.extend(np.zeros(FEATURES_PER_EVENT, dtype=np.float32))
+
+        samples.append(np.array(event_features[:num_features], dtype=np.float32))
         workload_names.append(workload_label)
-    
+
     return np.array(samples, dtype=np.float32), workload_names
 
 
@@ -197,8 +214,10 @@ def main():
     label_encoder = metadata['label_encoder']
     mean = metadata['mean']
     std = metadata['std']
+    num_features = len(mean)  # Derived from training data; avoids hardcoding
     print(f"✓ Metadata loaded:")
     print(f"  Classes: {len(label_encoder.classes_)}")
+    print(f"  Features: {num_features}")
     print(f"  Normalization: mean/std from training data")
     if 'test_accuracy' in metadata:
         print(f"  Test accuracy: {metadata['test_accuracy']:.4f}")
@@ -217,7 +236,7 @@ def main():
         
         # Extract features from JSON
         print(f"Extracting features...")
-        X, workload_names = extract_features_from_json(str(features_path))
+        X, workload_names = extract_features_from_json(str(features_path), num_features=num_features)
         print(f"✓ Extracted {len(X)} samples with {X.shape[1]} features\n")
         
         # Normalize features (using training mean/std)

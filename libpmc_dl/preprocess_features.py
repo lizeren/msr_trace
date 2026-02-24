@@ -18,6 +18,9 @@ import pickle
 from pathlib import Path
 
 
+FEATURES_PER_EVENT = 16  # Number of statistical features computed per PMC event
+
+
 def compute_statistical_features(timestamps: List[int], sampling_period: int, 
                                 total_count_mean: float = 0.0,
                                 total_count_std: float = 0.0,
@@ -106,7 +109,7 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    all_samples = []
+    all_samples_raw = []  # Raw (unpadded) event feature lists; padding happens after all files are read
     all_labels = []
     all_groups = []  # Track which file each sample came from
     
@@ -131,6 +134,10 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
         for workload_label, events in data.items():
             # Process into statistical features
             event_features = []
+
+            # Sort events by event number
+            # without it "event_0", "event_1", "event_10", "event_11", ..., "event_19"
+            # with it "event_0", "event_1", "event_2", ..., "event_10", "event_11"
             event_keys = sorted(events.keys(), key=lambda x: int(x.split('_')[1]))
             
             for event_key in event_keys:
@@ -154,23 +161,26 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
                     duration_mean_ns, duration_std_ns,
                     num_samples_mean, num_samples_std
                 )
-                event_features.append(stats)  # [38, 16]
-            
-            # Ensure exactly 38 events (pad if needed)
-            while len(event_features) < 38:
-                event_features.append(np.zeros(16, dtype=np.float32))
-            
-            # Store as [38, 16] array
-            sample = np.array(event_features[:38], dtype=np.float32)
-            all_samples.append(sample)
+                event_features.append(stats)
+
+            all_samples_raw.append(event_features)
             all_labels.append(workload_label)
             all_groups.append(file_group)  # Track which file this sample came from
     
-    # Convert to arrays
-    X = np.array(all_samples, dtype=np.float32)  # Shape: [N, 38, 16]
+    # Determine max events dynamically across all collected samples
+    max_events = max(len(ef) for ef in all_samples_raw) if all_samples_raw else 0
+
+    # Pad every sample to max_events and convert to arrays
+    all_samples = []
+    for event_features in all_samples_raw:
+        while len(event_features) < max_events:
+            event_features.append(np.zeros(FEATURES_PER_EVENT, dtype=np.float32))
+        all_samples.append(np.array(event_features[:max_events], dtype=np.float32))
+
+    X = np.array(all_samples, dtype=np.float32)  # Shape: [N, max_events, FEATURES_PER_EVENT]
     y = np.array(all_labels)
     groups = np.array(all_groups)  # Group identifiers (file names)
-    
+
     print(f"\n  ✓ Processed {len(all_samples)} samples from {len(np.unique(groups))} unique files")
     
     # Analyze class distribution
@@ -277,8 +287,8 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
         'shape': X.shape,
         'num_samples': len(X),
         'num_files': len(np.unique(groups)),
-        'num_events': 38,
-        'num_features': 16,
+        'num_events': max_events,
+        'num_features': FEATURES_PER_EVENT,
         'min_samples_threshold': min_samples,
         'functions_removed': functions_too_few if functions_too_few else [],
         'feature_names': [
@@ -319,9 +329,9 @@ def preprocess_and_cache(features_pattern: str, output_dir: str = 'features_16',
             f.write(f"  Functions in cache: {len(label_counts)}\n")
         f.write(f"\n")
         f.write(f"Feature dimensions:\n")
-        f.write(f"  Events per sample: 38\n")
-        f.write(f"  Features per event: 16 (6 from stats + 10 from timestamps)\n")
-        f.write(f"  Total features: 608 (when flattened: 38*16)\n\n")
+        f.write(f"  Events per sample: {max_events}\n")
+        f.write(f"  Features per event: {FEATURES_PER_EVENT} (6 from stats + 10 from timestamps)\n")
+        f.write(f"  Total features: {max_events * FEATURES_PER_EVENT} (when flattened: {max_events}*{FEATURES_PER_EVENT})\n\n")
         f.write(f"Feature names (per event):\n")
         for i, name in enumerate(cache_data['feature_names'], 1):
             f.write(f"  {i}. {name}\n")

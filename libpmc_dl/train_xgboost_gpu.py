@@ -26,6 +26,9 @@ from sklearn.metrics import classification_report, accuracy_score, balanced_accu
 import xgboost as xgb
 
 
+FEATURES_PER_EVENT = 16  # Number of statistical features computed per PMC event
+
+
 def compute_statistical_features(timestamps: List[int], sampling_period: int,
                                 total_count_mean: float = 0.0,
                                 total_count_std: float = 0.0,
@@ -86,32 +89,32 @@ def compute_statistical_features(timestamps: List[int], sampling_period: int,
 def load_data(features_pattern: str) -> Tuple[np.ndarray, List[str]]:
     """Load data and compute statistical features."""
     files = sorted(glob.glob(features_pattern))
-    samples = []
+    samples_raw = []  # Flat feature lists, one per workload; length varies by event count
     labels = []
-    
+
     print(f"Loading {len(files)} files and computing statistical features...")
-    
+
     for file_idx, file_path in enumerate(files):
         if file_idx % 200 == 0:
             print(f"  Progress: {file_idx}/{len(files)} files...")
-        
+
         try:
             with open(file_path, 'r') as f:
                 data = json.load(f)
         except (json.JSONDecodeError, ValueError) as e:
             print(f"  Warning: Skipping corrupted file: {file_path}")
             continue
-        
+
         for workload_label, events in data.items():
             # Process into statistical features
             event_features = []
             event_keys = sorted(events.keys(), key=lambda x: int(x.split('_')[1]))
-            
+
             for event_key in event_keys:
                 event_data = events[event_key]
                 timestamps = event_data.get('timestamps_ns', [])
                 sampling_period = event_data.get('sampling_period', 100)
-                
+
                 # Get all stats (these are always available in the JSON)
                 stats_dict = event_data.get('stats', {})
                 total_count_mean = stats_dict.get('total_count_mean', 0.0)
@@ -120,23 +123,31 @@ def load_data(features_pattern: str) -> Tuple[np.ndarray, List[str]]:
                 duration_std_ns = stats_dict.get('duration_std_ns', 0.0)
                 num_samples_mean = stats_dict.get('num_samples_mean', 0.0)
                 num_samples_std = stats_dict.get('num_samples_std', 0.0)
-                
-                # Compute 16 features per event
+
+                # Compute FEATURES_PER_EVENT features per event (flatten into a single list)
                 stats = compute_statistical_features(
                     timestamps, sampling_period,
                     total_count_mean, total_count_std,
                     duration_mean_ns, duration_std_ns,
                     num_samples_mean, num_samples_std
                 )
-                event_features.extend(stats)  # Flatten: 38 events * 16 features = 608 features
-            
-            # Ensure exactly 38 events (pad if needed)
-            while len(event_features) < 608:  # 38 * 16
-                event_features.extend(np.zeros(16, dtype=np.float32))
-            
-            samples.append(np.array(event_features[:608], dtype=np.float32))
+                event_features.extend(stats)
+
+            samples_raw.append(event_features)
             labels.append(workload_label)
-    
+
+    # Determine max feature vector length across all samples, then pad uniformly
+    max_features = max(len(s) for s in samples_raw) if samples_raw else 0
+    # Ensure max_features is a multiple of FEATURES_PER_EVENT (always true when computed above)
+    if max_features % FEATURES_PER_EVENT != 0:
+        max_features = ((max_features // FEATURES_PER_EVENT) + 1) * FEATURES_PER_EVENT
+
+    samples = []
+    for s in samples_raw:
+        while len(s) < max_features:
+            s.extend([0.0] * FEATURES_PER_EVENT)
+        samples.append(np.array(s[:max_features], dtype=np.float32))
+
     print(f"Loaded {len(samples)} samples with {len(samples[0])} features each")
     return np.array(samples), labels
 
@@ -189,7 +200,7 @@ def main():
         with open(cache_file, 'rb') as f:
             cache_data = pickle.load(f)
         
-        X = cache_data['X'].reshape(len(cache_data['X']), -1)  # Flatten [N, 38, 16] -> [N, 608]
+        X = cache_data['X'].reshape(len(cache_data['X']), -1)  # Flatten [N, num_events, FEATURES_PER_EVENT] -> [N, num_events*FEATURES_PER_EVENT]
         y = cache_data['y']
         groups = cache_data.get('groups', None)  # Load group information
         
@@ -489,8 +500,8 @@ def main():
     importance_sorted = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:20]
     
     for idx, (feat, score) in enumerate(importance_sorted, 1):
-        event_num = int(feat[1:]) // 16  # 16 features per event
-        feat_num = int(feat[1:]) % 16
+        event_num = int(feat[1:]) // FEATURES_PER_EVENT
+        feat_num = int(feat[1:]) % FEATURES_PER_EVENT
         feat_names = [
             'cnt_mean', 'cnt_std', 'dur_mean', 'dur_std', 'n_mean', 'n_std',  # Stats (1-6)
             'tot_dur', 'mean_int', 'std_int', 'min_int', 'max_int',           # Temporal (7-11)
@@ -549,7 +560,7 @@ def main():
     print(f"  Model: XGBoost")
     print(f"  Device: {'GPU (cuda:0)' if args.gpu else 'CPU'}")
     print(f"  Samples: {len(X)}")
-    print(f"  Features: {X.shape[1]} (38 events × 16 statistical features)")
+    print(f"  Features: {X.shape[1]} ({X.shape[1] // FEATURES_PER_EVENT} events x {FEATURES_PER_EVENT} statistical features)")
     print(f"  Classes: {len(label_encoder.classes_)}")
     print(f"  Trees: {bst.best_iteration}")
     print(f"  Test Accuracy: {test_acc*100:.2f}%")
