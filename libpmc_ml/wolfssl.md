@@ -4,6 +4,9 @@ If you don't get any results from libpmc measurement, always run this command an
 
 ```bash
 sudo sysctl kernel.perf_event_paranoid=1
+
+# eager binding, just so you don't forget
+export LD_BIND_NOW=1
 ```
 
 ## wolfssl
@@ -29,13 +32,20 @@ to link against libpmc
 ```bash
 make clean
 ./configure LIBS="-L$PWD/testsuite -lpmc"
+# if also link against libcontext_mixer.so
+./configure LIBS="-L$PWD/testsuite -lpmc -lcontext_mixer"
 
 make -j
 # IMPORTANT: you need to specify the libpmc path
 export LD_LIBRARY_PATH="$PWD/testsuite:$LD_LIBRARY_PATH"
 export PMC_EVENT_INDICES="0,1,2,3" && ./testsuite/testsuite.test
+# if you need context washer
+export MIXER_INDICES=1 && PMC_EVENT_INDICES="0,1,2,3" && ./testsuite/testsuite.test
 #python collector
 python3 collect_pmc_features.py --target "./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 > result.log
+
+# python collector with wolfssl context washer
+python3 collect_pmc_features_mixer.py --target "./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 > result.log
 
 ```
 
@@ -211,4 +221,77 @@ find . -maxdepth 1 -type f \
 find . -maxdepth 1 -type f \
   \( -name '*.[0-9]*t.*' -o -name 'a--.[0-9]*t.*' \) \
   -delete
+```
+
+
+## Collect traces for CVE functions
+
+
+
+
+
+## WolfSSL static library version
+
+we compile wolfssl into static library version on ubuntu 18.04 and copy the static library to Debian 13
+```bash
+
+# use gcc 7.5.0 to compile wolfssl on Debian as default GCC is 13
+cd ~/Desktop/wolfssl
+env -u LD_LIBRARY_PATH CC=/opt/gcc-7.5.0/bin/gcc \
+  LDFLAGS="-Wl,-rpath,$PWD/testsuite" \
+  ./configure --disable-shared --enable-static \
+  LIBS="-L$PWD/testsuite -lpmc -lpthread -ldl"
+
+
+# Configure to compile as static library version, also link against libpmc and libcontext_mixer
+./configure --disable-shared --enable-static LIBS="-L$PWD/testsuite -lpmc -lpthread -ldl -lcontext_mixer"
+make -j"$(nproc)"
+# still need to load libpmc.so and libcontext_mixer.so
+export LD_LIBRARY_PATH="$PWD/testsuite:$LD_LIBRARY_PATH"
+./testsuite/testsuite.test
+```
+
+Verify tests are not using the shared library
+
+```bash
+ldd ./testsuite/testsuite.test | grep -i wolfssl
+```
+
+
+## Using different libc version
+
+Copy runtime files directly from Ubuntu 18.04, which uses glibc 2.27, to Debian 13.
+
+```bash
+cd /home/lizeren/Desktop/glibc-2.27
+
+cp /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /home/lizeren/Desktop/glibc-2.27/
+cp /lib/x86_64-linux-gnu/libc.so.6 /home/lizeren/Desktop/glibc-2.27/lib/
+cp /lib/x86_64-linux-gnu/libm.so.6 /home/lizeren/Desktop/glibc-2.27/lib/
+cp /lib/x86_64-linux-gnu/libdl.so.2 /home/lizeren/Desktop/glibc-2.27/lib/
+cp /lib/x86_64-linux-gnu/librt.so.1 /home/lizeren/Desktop/glibc-2.27/lib/
+cp /lib/x86_64-linux-gnu/libpthread.so.0 /home/lizeren/Desktop/glibc-2.27/lib/
+cp /lib/x86_64-linux-gnu/libgcc_s.so.1 /home/lizeren/Desktop/glibc-2.27/lib/
+```
+
+
+```bash
+# specify the path to not use debian's default glibc
+
+GLIBC=/home/lizeren/Desktop/glibc-2.27
+
+$GLIBC/ld-linux-x86-64.so.2 \
+  --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs" \
+  ./testsuite/testsuite.test
+
+ # debug mode to see which library is loaded
+LD_DEBUG=libs $GLIBC/ld-linux-x86-64.so.2 \
+  --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs" \
+  ./testsuite/testsuite.test 2>&1 | egrep 'ld-linux|libc\.so\.6|libpthread\.so'
+
+
+# python collector
+  python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 \
+  --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs" \
+  ./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 > result.log
 ```
