@@ -5,7 +5,6 @@ If you don't get any results from libpmc measurement, always run this command an
 ```bash
 sudo sysctl kernel.perf_event_paranoid=1
 
-# eager binding, just so you don't forget
 export LD_BIND_NOW=1
 ```
 
@@ -39,8 +38,9 @@ make -j
 # IMPORTANT: you need to specify the libpmc path
 export LD_LIBRARY_PATH="$PWD/testsuite:$LD_LIBRARY_PATH"
 export PMC_EVENT_INDICES="0,1,2,3" && ./testsuite/testsuite.test
+
 # if you need context washer
-export MIXER_INDICES=1 && PMC_EVENT_INDICES="0,1,2,3" && ./testsuite/testsuite.test
+export MIXER_INDICES=1 && export PMC_EVENT_INDICES="0,1,2,3" && ./testsuite/testsuite.test
 #python collector
 python3 collect_pmc_features.py --target "./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 > result.log
 
@@ -245,10 +245,16 @@ env -u LD_LIBRARY_PATH CC=/opt/gcc-7.5.0/bin/gcc \
 
 # Configure to compile as static library version, also link against libpmc and libcontext_mixer
 ./configure --disable-shared --enable-static LIBS="-L$PWD/testsuite -lpmc -lpthread -ldl -lcontext_mixer"
-make -j"$(nproc)"
+make -j"$(nproc)" CFLAGS="-O0"
 # still need to load libpmc.so and libcontext_mixer.so
 export LD_LIBRARY_PATH="$PWD/testsuite:$LD_LIBRARY_PATH"
-./testsuite/testsuite.test
+
+
+#python collector
+python3 collect_pmc_features.py --target "./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 &> /dev/null
+
+# python collector with wolfssl context washer
+python3 collect_pmc_features_mixer.py --target "./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 &> /dev/null
 ```
 
 Verify tests are not using the shared library
