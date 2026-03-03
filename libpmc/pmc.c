@@ -926,18 +926,27 @@ pmc_multi_handle_t* pmc_measure_begin(const char *label,
 
 // Simplified API - load events from CSV file
 pmc_multi_handle_t* pmc_measure_begin_csv(const char *label, const char *csv_path) {
+    pmc_debug("pmc_measure_begin_csv called: label=%s, csv_path=%s",
+              label ? label : "NULL", csv_path ? csv_path : "NULL");
+
     if (!label) {
         pmc_set_error("NULL label");
+        pmc_debug("  ERROR: NULL label");
         return NULL;
     }
     
     // Load events once if not already cached
     if (!cached_events) {
         const char *path = csv_path ? csv_path : "pmc_events.csv";
+        pmc_debug("  No cached events, loading from: %s", path);
         
         if (load_events_from_csv(path, &cached_events, &cached_num_events) != 0) {
+            pmc_debug("  ERROR: Failed to load events from CSV: %s", path);
             return NULL;  // Error already set by load_events_from_csv
         }
+        pmc_debug("  Loaded %zu events from CSV", cached_num_events);
+    } else {
+        pmc_debug("  Reusing %zu cached events (csv_path argument ignored)", cached_num_events);
     }
     
     // Reuse cached events (don't free them)
