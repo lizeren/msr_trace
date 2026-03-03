@@ -4,7 +4,7 @@ If you don't get any results from libpmc measurement, always run this command an
 
 ```bash
 sudo sysctl kernel.perf_event_paranoid=1
-
+sudo sysctl -w kernel.randomize_va_space=0
 export LD_BIND_NOW=1
 ```
 
