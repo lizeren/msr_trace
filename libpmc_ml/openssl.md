@@ -3,6 +3,8 @@ Instructions to deploy libpmc to different target software
 ### Pre-requirement: release perf_event_paranoid
 ```bash
 sudo sysctl kernel.perf_event_paranoid=1
+sudo sysctl -w kernel.randomize_va_space=0
+export LD_BIND_NOW=1
 ```
 ## openssl
 
@@ -146,6 +148,11 @@ make
 ```
 
 
+Verify tests are not using the shared library
+
+```bash
+ldd ./apps/openssl 
+```
 ## Trick
 
 If the test program has already called to libpmc/context mixer, we need to compile the openssl in the following order:
@@ -155,4 +162,68 @@ make
 # make will stop complaining about the missing -lpmc and -lcontext_mixer
 # build the rest with -lpmc and -lcontext_mixer
 make EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
+```
+
+
+## Collect traces for CVE functions
+
+### CVE-2025-69418 (CRYPTO_ocb128_encrypt)
+
+O0 optimization:
+
+```bash
+./Configure 
+make CFLAGS="-O0" EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
+
+# In test directory
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
+python3 collect_pmc_features_mixer.py --target " ./evp_test recipes/30-test_evp_data/evpciph_aes_ocb.txt " --runs 5 --total 1 --name EVP_CipherFinal_ex --start 1 &> /dev/null
+```
+
+
+### CVE-2025-11187 (PBMAC1_PBKDF2_HMAC)
+
+O0 optimization:
+
+```bash
+./Configure 
+make CFLAGS="-O0" EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
+
+#generate input file for single executable: pbmac1_defaults.p12 
+LD_LIBRARY_PATH=. ./apps/openssl pkcs12 -export -pbmac1_pbkdf2 -inkey test/certs/cert-key-cert.pem -in test/certs/cert-key-cert.pem -passout pass:1234 -out /tmp/pbmac1_defaults.p12 
+
+
+python3 collect_pmc_features_mixer.py --target " ./../apps/openssl pkcs12 -in /tmp/pbmac1_defaults.p12 -info -noout -passin pass:1234 " --runs 5 --total 1 --name PKCS12_verify_mac  --start 1 &> /dev/null
+```
+
+### CVE-2026-22796 (parse_bag)
+
+O0 optimization:
+```bash
+./Configure 
+make CFLAGS="-O0" EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
+export LD_LIBRARY_PATH="./:$LD_LIBRARY_PATH"
+LD_LIBRARY_PATH=. ./test/pkcs12_format_test -test 5 
+
+# In test directory
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
+
+python3 collect_pmc_features_mixer.py --target "./pkcs12_format_test -test 5" --runs 5 --total 1 --name PKCS12_parse --start 1 &> /dev/null
+# or output to result.log
+```
+
+
+### CVE-2025-15467 (evp_cipher_get_asn1_aead_params)
+
+O0 optimization:
+```bash
+./Configure 
+make CFLAGS="-O0" EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
+LD_LIBRARY_PATH=. ./apps/openssl cms -encrypt -aes-128-gcm -in test/certs/ca-cert.pem -out trigger.cms test/certs/ca-cert.pem
+
+# in test directory
+LD_LIBRARY_PATH=.. ./../apps/openssl cms -decrypt -in ../trigger.cms -recip certs/ca-cert.pem -inkey certs/ca-key.pem
+
+python3 collect_pmc_features_mixer.py --target "./../apps/openssl cms -decrypt -in ../trigger.cms -recip certs/ca-cert.pem -inkey certs/ca-key.pem" --runs 5 --total 1 --name CMS_decrypt --start 1 &> /dev/null
 ```
