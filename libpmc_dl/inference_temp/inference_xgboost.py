@@ -155,8 +155,8 @@ def main():
                         help='Path to trained XGBoost model (default: ../models/xgboost_model.json)')
     parser.add_argument('--metadata', default='../models/xgboost_metadata.pkl',
                         help='Path to model metadata (default: ../models/xgboost_metadata.pkl)')
-    parser.add_argument('--features', default='traces/*.json',
-                        help='JSON feature file(s) to process. Can be a single file or glob pattern (default: traces/*.json)')
+    parser.add_argument('--features', default='features/*.json',
+                        help='JSON feature file(s) to process. Can be a single file or glob pattern (default: features/*.json)')
     parser.add_argument('--output', help='Optional: Save results to JSON file')
     
     args = parser.parse_args()
