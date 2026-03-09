@@ -279,13 +279,14 @@ cp /lib/x86_64-linux-gnu/librt.so.1 /home/lizeren/Desktop/glibc-2.27/lib/
 cp /lib/x86_64-linux-gnu/libpthread.so.0 /home/lizeren/Desktop/glibc-2.27/lib/
 cp /lib/x86_64-linux-gnu/libgcc_s.so.1 /home/lizeren/Desktop/glibc-2.27/lib/
 ```
-
+$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." 
 
 ```bash
 # specify the path to not use debian's default glibc
 
 GLIBC=/home/lizeren/Desktop/glibc-2.27
 
+#regular run
 $GLIBC/ld-linux-x86-64.so.2 \
   --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs" \
   ./testsuite/testsuite.test
@@ -299,5 +300,5 @@ LD_DEBUG=libs $GLIBC/ld-linux-x86-64.so.2 \
 # python collector
   python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 \
   --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs" \
-  ./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 > result.log
+  ./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 &> /dev/null
 ```
