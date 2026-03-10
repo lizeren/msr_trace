@@ -54,8 +54,7 @@ python3 collect_pmc_features_mixer.py --target "./rsa_test" --runs 5 --total 1 -
 
 # cross OS version measurement
 GLIBC=/home/lizeren/Desktop/glibc-2.27
-
-python3 collect_pmc_features_mixer.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./rsa_test" --runs 5 --total 1 --name rsa --start 1 > /dev/null
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./rsa_test" --runs 5 --total 1 --name rsa --start 1 > /dev/null
 ```
 
 Result json file has the name of pmc_results.json.
@@ -88,13 +87,6 @@ make test/http_test EX_LIBS="-L.. -lpmc -ldl -pthread"
 python3 collect_pmc_features.py --target "./http_test certs/ca-cert.pem" --runs 5 --total 10 --name http --start 1 &> /dev/null
 
 
-
-# temp: compile variant
-make test/http_test_variant EX_LIBS="-L.. -lpmc -ldl -pthread"
-export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH" # if libpmc.so is in the root directory of openssl
-python3 collect_pmc_features.py --target "./http_test_variant certs/ca-cert.pem" --runs 5 --total 1 --name http_variant --start 1 > result.log
-
-
 # with context mixer
 make test/http_test EX_LIBS="-L.. -lpmc -ldl -pthread -lcontext_mixer"
 python3 collect_pmc_features_mixer.py --target "./http_test certs/ca-cert.pem" --runs 5 --total 1 --name http --start 1 &> /dev/null
@@ -102,10 +94,7 @@ python3 collect_pmc_features_mixer.py --target "./http_test certs/ca-cert.pem" -
 
 # cross OS version measurement
 GLIBC=/home/lizeren/Desktop/glibc-2.27
-python3 collect_pmc_features_mixer.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./http_test certs/ca-cert.pem" --runs 5 --total 1 --name http --start 1 &> /dev/null
-
-
-
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./http_test certs/ca-cert.pem" --runs 5 --total 1 --name http --start 1 &> /dev/null
 ```
 
 `OSSL_HTTP_parse_url`
@@ -134,8 +123,7 @@ python3 collect_pmc_features_mixer.py --target "./slh_dsa_test" --runs 5 --total
 
 # cross OS version measurement
 GLIBC=/home/lizeren/Desktop/glibc-2.27
-
-python3 collect_pmc_features_mixer.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./slh_dsa_test" --runs 5 --total 1 --name slh_dsa --start 1 &> /dev/null
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./slh_dsa_test" --runs 5 --total 1 --name slh_dsa --start 1 &> /dev/null
 ```
 
 `EVP_PKEY_CTX_new_from_name`
@@ -160,24 +148,11 @@ python3 collect_pmc_features_mixer.py --target "$GLIBC/ld-linux-x86-64.so.2 --li
 ./Configure linux-x86_64 no-shared
 make
 ```
-
-
 Verify tests are not using the shared library
 
 ```bash
 ldd ./apps/openssl 
 ```
-## Trick
-
-If the test program has already called to libpmc/context mixer, we need to compile the openssl in the following order:
-
-```bash
-make
-# make will stop complaining about the missing -lpmc and -lcontext_mixer
-# build the rest with -lpmc and -lcontext_mixer
-make EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
-```
-
 
 ## Collect traces for CVE functions
 
@@ -274,31 +249,11 @@ $GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsui
 # Note when we collect inference data, we don't use mixer collector
 # I separate two version of the same CVE function into two different directories.
 
-# First verison
+# First verison(original version)
 python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./ssl_test ssl-tests/08-npn-single.cnf default" --runs 5 --total 1 --name do_handshake --start 1 &> /dev/null 
 
-# Second version
+# Second version(patched version)
 python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./ssl_test ssl-tests/08-npn-single.cnf default" --runs 5 --total 1 --name do_handshake_patch --start 1 &> /dev/null 
 
 python3 collect_pmc_features.py --target "./ssl_test ssl-tests/08-npn-single.cnf default" --runs 5 --total 10 --name do_handshake_patch --start 1 &> /dev/null
-
-
-```
-
-cross os inter-functions
-
-```bash
-# specify the path to not use debian's default glibc
-GLIBC=/home/lizeren/Desktop/glibc-2.27
-
-
-
-# rsa_test
-python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./rsa_test" --runs 5 --total 1 --name rsa --start 1 &> /dev/null 
-
-# http_test
-python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./http_test certs/ca-cert.pem" --runs 5 --total 1 --name http --start 1 &> /dev/null 
-
-# slh_dsa_test
-python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./slh_dsa_test" --runs 5 --total 1 --name slh_dsa --start 1 &> /dev/null 
 ```
