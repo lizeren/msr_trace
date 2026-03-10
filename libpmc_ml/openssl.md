@@ -39,15 +39,12 @@ make test/rsa_test EX_LIBS="-L/mnt/linuxstorage/openssl -lpmc -ldl -pthread" CFL
   -fplugin-arg-instrument_callsites_plugin-csv-path=pmc_events.csv"
 
 
-# temp: compile variant
-make test/rsa_test_variant EX_LIBS="-L.. -lpmc -ldl -pthread"
-export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH" # if libpmc.so is in the root directory of openssl
-python3 collect_pmc_features.py --target "./rsa_test_variant" --runs 5 --total 1 --name rsa_variant --start 1 > result.log
 
 
 export PMC_EVENT_INDICES="0,1,2,3" && ./test/rsa_test
 #python collector to run test/rsa_test.c 5 times and save the average results
-python3 collect_pmc_features.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 > result.log
+python3 collect_pmc_features.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 &> /dev/null
+
 
 # with context mixer
 make test/rsa_test EX_LIBS="-L.. -lpmc -ldl -pthread -lcontext_mixer"
@@ -88,7 +85,7 @@ API functions that are wrapped:
 make test/http_test EX_LIBS="-L.. -lpmc -ldl -pthread"
 ./test/http_test test/certs/ca-cert.pem
 # at directory of test files
-python3 collect_pmc_features.py --target "./http_test certs/ca-cert.pem" --runs 5 --total 10 --name http --start 1 > result.log
+python3 collect_pmc_features.py --target "./http_test certs/ca-cert.pem" --runs 5 --total 10 --name http --start 1 &> /dev/null
 
 
 
@@ -127,15 +124,8 @@ python3 collect_pmc_features_mixer.py --target "$GLIBC/ld-linux-x86-64.so.2 --li
 make test/slh_dsa_test EX_LIBS="-L.. -lpmc -ldl -pthread"
 ./test/slh_dsa_test 
 # at directory of test files
-python3 collect_pmc_features.py --target "./slh_dsa_test" --runs 5 --total 1 --name slh_dsa --start 1 > result.log
+python3 collect_pmc_features.py --target "./slh_dsa_test" --runs 5 --total 10 --name slh_dsa --start 1 &> /dev/null
 
-
-
-
-# temp: compile variant
-make test/slh_dsa_test_variant EX_LIBS="-L.. -lpmc -ldl -pthread"
-export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH" # if libpmc.so is in the root directory of openssl
-python3 collect_pmc_features.py --target "./slh_dsa_test_variant" --runs 5 --total 1 --name slh_dsa_variant --start 1 > result.log
 
 
 # context mixer
@@ -293,4 +283,22 @@ python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-
 python3 collect_pmc_features.py --target "./ssl_test ssl-tests/08-npn-single.cnf default" --runs 5 --total 10 --name do_handshake_patch --start 1 &> /dev/null
 
 
+```
+
+cross os inter-functions
+
+```bash
+# specify the path to not use debian's default glibc
+GLIBC=/home/lizeren/Desktop/glibc-2.27
+
+
+
+# rsa_test
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./rsa_test" --runs 5 --total 1 --name rsa --start 1 &> /dev/null 
+
+# http_test
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./http_test certs/ca-cert.pem" --runs 5 --total 1 --name http --start 1 &> /dev/null 
+
+# slh_dsa_test
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./slh_dsa_test" --runs 5 --total 1 --name slh_dsa --start 1 &> /dev/null 
 ```
