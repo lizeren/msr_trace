@@ -6,8 +6,19 @@ python3 preprocess_features.py --features "features/pmc_features_*.json"
 # if function has less than 50 samples, it will be filtered out
 python3 preprocess_features.py --features "features/pmc_features_*.json" --min-samples 50
 
-# if you want to sample N files per pattern, you can use the following command
-python3 preprocess_features.py     --features "features/pmc_features_*.json"     --sample-per-pattern "rsa:100,wolfssl:100,http:100,slh_dsa:100"
+# if you want to sample N files per class, you can use the following command by specifying the name of the json file
+python3 preprocess_features.py     --features "features/pmc_features_*.json"     --sample-per-pattern "rsa:100,http:100,slh_dsa:100"
+```
+
+## combo.sh — O0/O3/Combined size sweep
+Runs a 3×3 matrix (rows: O0, O3, Combined; columns: sample sizes) and prints test accuracy.
+Patterns (patch/unpatch variants) are auto-detected from the folder.
+```bash
+# Default sizes 80 160 320
+bash combo.sh CVE-2025-11187-static-combine-10events_mix
+
+# Custom sizes
+bash combo.sh CVE-2025-11187-shared-combine-10events_mix 50 100 200
 ```
 
 ## Hybrid CNN (Statistical Features Only)
