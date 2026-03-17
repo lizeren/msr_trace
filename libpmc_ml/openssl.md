@@ -40,7 +40,7 @@ make test/rsa_test EX_LIBS="-L/mnt/linuxstorage/openssl -lpmc -ldl -pthread" CFL
 
 
 
-
+export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
 export PMC_EVENT_INDICES="0,1,2,3" && ./test/rsa_test
 #python collector to run test/rsa_test.c 5 times and save the average results
 python3 collect_pmc_features.py --target "./rsa_test" --runs 5 --total 10 --name rsa --start 1 &> /dev/null
@@ -54,7 +54,7 @@ python3 collect_pmc_features_mixer.py --target "./rsa_test" --runs 5 --total 1 -
 
 # cross OS version measurement
 GLIBC=/home/lizeren/Desktop/glibc-2.27
-python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./rsa_test" --runs 5 --total 1 --name rsa --start 1 > /dev/null
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./rsa_test" --runs 5 --total 10 --name rsa --start 1 > /dev/null
 ```
 
 Result json file has the name of pmc_results.json.
@@ -94,7 +94,7 @@ python3 collect_pmc_features_mixer.py --target "./http_test certs/ca-cert.pem" -
 
 # cross OS version measurement
 GLIBC=/home/lizeren/Desktop/glibc-2.27
-python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./http_test certs/ca-cert.pem" --runs 5 --total 1 --name http --start 1 &> /dev/null
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./http_test certs/ca-cert.pem" --runs 5 --total 10 --name http --start 1 &> /dev/null
 ```
 
 `OSSL_HTTP_parse_url`
@@ -123,7 +123,7 @@ python3 collect_pmc_features_mixer.py --target "./slh_dsa_test" --runs 5 --total
 
 # cross OS version measurement
 GLIBC=/home/lizeren/Desktop/glibc-2.27
-python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./slh_dsa_test" --runs 5 --total 1 --name slh_dsa --start 1 &> /dev/null
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./slh_dsa_test" --runs 5 --total 10 --name slh_dsa --start 1 &> /dev/null
 ```
 
 `EVP_PKEY_CTX_new_from_name`
@@ -146,7 +146,7 @@ python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-
 
 ```bash
 ./Configure linux-x86_64 no-shared
-make
+make EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
 ```
 Verify tests are not using the shared library
 
@@ -166,7 +166,7 @@ make CFLAGS="-O0" EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
 
 # In test directory
 export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
-python3 collect_pmc_features_mixer.py --target " ./evp_test recipes/30-test_evp_data/evpciph_aes_ocb.txt " --runs 5 --total 1 --name EVP_CipherFinal_ex --start 1 &> /dev/null
+python3 collect_pmc_features_mixer.py --target " ./evp_test recipes/30-test_evp_data/evpciph_aes_ocb.txt " --runs 5 --total 320 --name EVP_CipherFinal_ex_patch_O0 --start 1 &> /dev/null
 ```
 
 
@@ -180,10 +180,11 @@ make CFLAGS="-O0" EX_LIBS="-L. -lpmc -ldl -pthread -lcontext_mixer"
 export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
 
 #generate input file for single executable: pbmac1_defaults.p12 
+# in root directory of openssl
 LD_LIBRARY_PATH=. ./apps/openssl pkcs12 -export -pbmac1_pbkdf2 -inkey test/certs/cert-key-cert.pem -in test/certs/cert-key-cert.pem -passout pass:1234 -out /tmp/pbmac1_defaults.p12 
 
 
-python3 collect_pmc_features_mixer.py --target " ./../apps/openssl pkcs12 -in /tmp/pbmac1_defaults.p12 -info -noout -passin pass:1234 " --runs 5 --total 1 --name PKCS12_verify_mac  --start 1 &> /dev/null
+python3 collect_pmc_features_mixer.py --target " ./../apps/openssl pkcs12 -in /tmp/pbmac1_defaults.p12 -info -noout -passin pass:1234 " --runs 5 --total 1 --name PKCS12_verify_mac_patch_O0  --start 1 &> /dev/null
 ```
 
 ### CVE-2026-22796 (parse_bag)
@@ -198,8 +199,12 @@ LD_LIBRARY_PATH=. ./test/pkcs12_format_test -test 5
 # In test directory
 export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
 
-python3 collect_pmc_features_mixer.py --target "./pkcs12_format_test -test 5" --runs 5 --total 1 --name PKCS12_parse --start 1 &> /dev/null
-# or output to result.log
+python3 collect_pmc_features_mixer.py --target "./pkcs12_format_test -test 5" --runs 5 --total 1 --name PKCS12_parse_unpatch_O0 --start 1 &> /dev/null
+
+# cross OS version measurement
+GLIBC=/home/lizeren/Desktop/glibc-2.27
+python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs:.." ./pkcs12_format_test -test 5" --runs 5 --total 10 --name PKCS12_parse_patch_O0 --start 1 &> /dev/null
+
 ```
 
 
@@ -215,7 +220,7 @@ LD_LIBRARY_PATH=. ./apps/openssl cms -encrypt -aes-128-gcm -in test/certs/ca-cer
 # in test directory
 LD_LIBRARY_PATH=.. ./../apps/openssl cms -decrypt -in ../trigger.cms -recip certs/ca-cert.pem -inkey certs/ca-key.pem
 
-python3 collect_pmc_features_mixer.py --target "./../apps/openssl cms -decrypt -in ../trigger.cms -recip certs/ca-cert.pem -inkey certs/ca-key.pem" --runs 5 --total 1 --name CMS_decrypt --start 1 &> /dev/null
+python3 collect_pmc_features_mixer.py --target "./../apps/openssl cms -decrypt -in ../trigger.cms -recip certs/ca-cert.pem -inkey certs/ca-key.pem" --runs 5 --total 1 --name CMS_decrypt_patch_O0 --start 1 &> /dev/null
 ```
 
 ### CVE-2024-5535 (SSL_select_next_proto)
@@ -230,7 +235,7 @@ export LD_LIBRARY_PATH="../:$LD_LIBRARY_PATH"
 # set environment variables to load cert files
 export CTLOG_FILE=ct/log_list.cnf && export TEST_CERTS_DIR=certs && LD_LIBRARY_PATH=.. 
 
-python3 collect_pmc_features_mixer.py --target "./ssl_test ssl-tests/08-npn-single.cnf default " --runs 5 --total 1 --name do_handshake --start 1 &> /dev/null 
+python3 collect_pmc_features_mixer.py --target "./ssl_test ssl-tests/08-npn-single.cnf default " --runs 5 --total 1 --name do_handshake_patch_O0 --start 1 &> /dev/null 
 ```
 
 
