@@ -28,7 +28,8 @@ If LD_BIND_NOW is set to a nonempty string → immediate binding (resolve symbol
 If it is unset → default behavior (lazy binding for functions)
 
 ```bash
-LD_BIND_NOW=1 ./your_program [args]
+export LD_BIND_NOW=1
+ ./your_program [args]
 ```
 
 observation: by default lazy binding is used, if eager binding is used, the accuracy will drop a lot
@@ -57,4 +58,4 @@ sudo sysctl -w kernel.randomize_va_space=0
 sudo sysctl -w kernel.randomize_va_space=2
 ```
 
-observation: looks like ASLR will not affect the accuracy
+observation: looks like ASLR will have a small effect on the inference accuracy but not on training accuracy
