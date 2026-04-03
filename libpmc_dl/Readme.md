@@ -1,3 +1,19 @@
+## extract_events.py — subset events from JSON (CSV-driven)
+
+Keeps only events whose `event_name` appears in the CSV (`event_name` column), re-indexes as `event_0`, `event_1`, …, and writes new `pmc_features_*.json` files under `--output`. Source folders are not modified. After that, point `preprocess_features.py`, `combo-*.sh`, and inference scripts at the new folder; no other pipeline changes.
+
+```bash
+python3 extract_events.py \
+  --input 2024-5991-static-40events_mix \
+  --events-csv pmc_events_deterministic.csv
+
+# Optional explicit output path (otherwise the folder name is derived, e.g. 40events -> 10events from CSV row count)
+python3 extract_events.py \
+  --input 2024-5991-static-40events_mix \
+  --events-csv pmc_events_deterministic.csv \
+  --output 2024-5991-static-10events_mix
+```
+
 ## Compute 10 statistical features brefore training
 ```bash
 # Default usage
@@ -13,6 +29,7 @@ python3 preprocess_features.py     --features "features/pmc_features_*.json"    
 ## combo.sh — O0/O3/Combined size sweep
 Runs a 3×3 matrix (rows: O0, O3, Combined; columns: sample sizes) and prints test accuracy.
 Patterns (patch/unpatch variants) are auto-detected from the folder.
+Input argument is the folder name that contains all the jsons in patch/unpatch and differnet optimization levels.
 ```bash
 # Default sizes 80 160 320
 bash combo.sh CVE-2025-11187-static-combine-10events_mix
@@ -55,3 +72,7 @@ Optional arguments:
 - `--epochs 50`: Number of training epochs
 - `--batch-size 64`: Batch size
 - `--lr 1e-4`: Learning rate
+
+## Inference
+python3 inference_xgboost.py --features shared-default
+python3 inference_xgboost.py --features ../CVE-2025-11187-static-combine-10events_mix
