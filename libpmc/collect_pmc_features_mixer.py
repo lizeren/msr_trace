@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
-PMC Temporal Feature Collector
+PMC Temporal Feature Collector with Context Mixer
 
 Collects performance counter data by running a target program multiple times
 with different PMC events (1 at a time), extracting temporal features for ML classification.
 
+Each iteration uses a different context mixer (1-8) to create varying microarchitectural states.
+The mixer cycles through: LLC thrash, L1D hot, I-cache churn, branch chaos, TLB thrash, 
+ALU spin, memory mixed, and alloc chaos.
+
 Automatically reads events from pmc_events.csv and measures them individually.
 
 Usage:
-    python3 collect_pmc_features.py --target ./example_cache_call --runs 5 --total 2
-    python3 collect_pmc_features.py --target "./program arg1 arg2" --runs 5
-    python3 collect_pmc_features.py --target ./http_server --runs 5 --total 10 --name http
-    python3 collect_pmc_features.py --target ./http_server --runs 5 --total 8 --name http --start 11
+    python3 collect_pmc_features_mixer.py --target ./example_cache_call --runs 5 --total 2
+    python3 collect_pmc_features_mixer.py --target "./program arg1 arg2" --runs 5
+    python3 collect_pmc_features_mixer.py --target ./http_server --runs 5 --total 10 --name http
+    python3 collect_pmc_features_mixer.py --target ./http_server --runs 5 --total 8 --name http --start 11
 """
 
 import json
@@ -30,7 +34,8 @@ from typing import Dict, List, Optional
 class PMCTemporalCollector:
     def __init__(self, target_binary: str, csv_file: str = "pmc_events.csv", 
                  output_json: str = "pmc_features.json",
-                 pmc_output: str = "pmc_results.json"):
+                 pmc_output: str = "pmc_results.json",
+                 mixer_index: int = None):
         # Parse target command (binary + arguments)
         # Example: "./example_cache_call arg1 arg2" -> ["./example_cache_call", "arg1", "arg2"]
         # Example: "taskset -c 2 ./example_cache_call" -> ["taskset", "-c", "2", "./example_cache_call"]
@@ -40,6 +45,7 @@ class PMCTemporalCollector:
         self.output_json = output_json
         self.pmc_output = pmc_output
         self.feature_db = {}
+        self.mixer_index = mixer_index
         
         # Find the actual target binary in the command
         # Handle cases like: "taskset -c 2 ./binary" or just "./binary"
@@ -91,6 +97,21 @@ class PMCTemporalCollector:
             print(f"✓ Full command: {' '.join(self.target_command)}")
             if self.target_binary_path != self.target_command[0]:
                 print(f"✓ Target binary: {self.target_binary_path}")
+        
+        # Print mixer info if set
+        if mixer_index is not None:
+            mixer_names = {
+                1: "LLC Thrash (cache-cold)",
+                2: "L1D Hot (cache-hot baseline)",
+                3: "Instruction-cache churn",
+                4: "Branch chaos",
+                5: "TLB thrash",
+                6: "ALU spin (power/frequency baseline)",
+                7: "Memory mixed (stream + random)",
+                8: "Alloc chaos"
+            }
+            mixer_name = mixer_names.get(mixer_index, "Unknown")
+            print(f"✓ Context Mixer: {mixer_index} - {mixer_name}")
     
     def read_event_indices_from_csv(self) -> List[int]:
         """Read a CSV file and returns a list of integers taken from the "index" column of that file."""
@@ -148,6 +169,8 @@ class PMCTemporalCollector:
         print(f"Collecting Events {event_str} for ALL workloads")
         print(f"Target: {' '.join(self.target_command)}")
         print(f"Runs: {num_runs}")
+        if self.mixer_index is not None:
+            print(f"Context Mixer: {self.mixer_index}")
         print(f"{'='*60}")
         
         # run_data will accumulate temporal features from each successful run
@@ -171,9 +194,10 @@ class PMCTemporalCollector:
             env = os.environ.copy()
             env['PMC_EVENT_INDICES'] = event_str
             env['PMC_OUTPUT_FILE'] = self.pmc_output
-            # Pass the absolute CSV path so libpmc can find it regardless of the
-            # binary's working directory (e.g. when the binary lives in a subdir).
-            env['PMC_EVENTS_CSV'] = str(Path(self.csv_file).resolve())
+            
+            # Set mixer index if provided
+            if hasattr(self, 'mixer_index'):
+                env['MIXER_INDICES'] = str(self.mixer_index)
             
             # Run target program with arguments
             try:
@@ -620,25 +644,37 @@ def main():
     - With --name rsa: pmc_features_rsa_1.json, pmc_features_rsa_2.json, ...
     """
     parser = argparse.ArgumentParser(
-        description='Collect PMC temporal features for ML classification (measures 1 event at a time)',
+        description='Collect PMC temporal features for ML classification with context mixers (measures 1 event at a time)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example:
   # Collect all events from pmc_events.csv (1 event at a time)
+  # Iteration 1 uses mixer 1 (LLC thrash), iteration 2 uses mixer 2 (L1D hot), etc.
   # Automatically extracts ALL workloads from the target program
-  python3 collect_pmc_features.py --target ./example_cache_call --runs 5
+  python3 collect_pmc_features_mixer.py --target ./example_cache_call --runs 5
   
-  # Generate multiple feature files (pmc_features_1.json, pmc_features_2.json, etc.)
-  python3 collect_pmc_features.py --target ./rsa_test --runs 5 --total 2
+  # Generate multiple feature files with different context mixers
+  # File 1: mixer 1, File 2: mixer 2, ..., File 9: mixer 1 (cycles), etc.
+  python3 collect_pmc_features_mixer.py --target ./rsa_test --runs 5 --total 10
   
-  # Descriptive naming (pmc_features_http_1.json, pmc_features_http_2.json, etc.)
-  python3 collect_pmc_features.py --target ./http_server --runs 5 --total 10 --name http
+  # Descriptive naming (pmc_features_http_1.json uses mixer 1, etc.)
+  python3 collect_pmc_features_mixer.py --target ./http_server --runs 5 --total 10 --name http
   
-  # Continue collection from file #11 (generates http_11.json to http_18.json)
-  python3 collect_pmc_features.py --target ./http_server --runs 5 --total 8 --name http --start 11
+  # Continue collection from file #11 (file 11 uses mixer 3, file 12 uses mixer 4, etc.)
+  python3 collect_pmc_features_mixer.py --target ./http_server --runs 5 --total 8 --name http --start 11
   
   # Target binary with arguments (use quotes!)
-  python3 collect_pmc_features.py --target "./example_cache_call arg1 arg2" --runs 5
+  python3 collect_pmc_features_mixer.py --target "./example_cache_call arg1 arg2" --runs 5
+
+Context Mixers (cycle through 1-8):
+  1: LLC Thrash (cache-cold)
+  2: L1D Hot (cache-hot baseline)
+  3: Instruction-cache churn
+  4: Branch chaos
+  5: TLB thrash
+  6: ALU spin (power/frequency baseline)
+  7: Memory mixed (stream + random)
+  8: Alloc chaos
         """
     )
     
@@ -684,19 +720,25 @@ Example:
             output_file = f'features/pmc_features_{iteration}.json'
         
         iteration_num = iteration - args.start + 1  # Display: 1/8, 2/8, etc.
+        
+        # Calculate mixer index for this iteration (cycles through 1-8)
+        mixer_index = ((iteration - 1) % 8) + 1
+        
         print(f"\n{'*'*60}")
         print(f"{'*'*60}")
         print(f"ITERATION {iteration_num}/{args.total} (File #{iteration})")
+        print(f"Context Mixer: {mixer_index}")
         print(f"Output file: {output_file}")
         print(f"{'*'*60}")
         print(f"{'*'*60}\n")
         
-        # Create collector
+        # Create collector with mixer index
         try:
             collector = PMCTemporalCollector(
                 target_binary=args.target,
                 csv_file=csv_file,
-                output_json=output_file
+                output_json=output_file,
+                mixer_index=mixer_index
             )
         except FileNotFoundError as e:
             print(f"Error: {e}")
