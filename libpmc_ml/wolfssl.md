@@ -36,18 +36,26 @@ pmc_events.csv: wolfssl/pmc_events.csv
 # compile static library version
 ./configure --disable-shared --enable-static --enable-all 
 # This compiles to O0. Without this specification it defaults to O2.
-make CFLAGS="-O0" LIBS="-L$PWD/testsuite -lpmc -lcontext_mixer" -j$(nproc)
+make CFLAGS="-O0" LIBS="-L. -lpmc -ldl -lcontext_mixer -pthread" -j$(nproc)
 
 export LD_LIBRARY_PATH="./:$LD_LIBRARY_PATH"
-# run the test program
+# run the test program with shared version
 export MIXER_INDICES=1 && export PMC_EVENT_INDICES="0,1,2,3" && LD_LIBRARY_PATH="./src/.libs:./testsuite/.libs:./:./" ./testsuite/.libs/testsuite.test
+# run the test program with static version
+export MIXER_INDICES=1 && export PMC_EVENT_INDICES="0,1,2,3" && LD_LIBRARY_PATH="./:${LD_LIBRARY_PATH:-}" ./testsuite/testsuite.test
 
 # why not just invoke ./testsuite/testsuite.test?
 # ./testsuite/testsuite.test is a script not a binary. During cross OS version measurement, we need to link against custom Glibc. The best way to do this is to use the binary directly.
 
 # python collector
 
-LD_LIBRARY_PATH="./src/.libs:./testsuite/.libs:./:./" python3 collect_pmc_features_mixer.py --target "LD_LIBRARY_PATH="./src/.libs:./testsuite/.libs:./:./" ./testsuite/.libs/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 &> /dev/null
+# shared version
+export LD_LIBRARY_PATH="./src/.libs:./testsuite/.libs:./:./"
+python3 collect_pmc_features_mixer.py   --target "./testsuite/.libs/testsuite.test"   --runs 5 --total 1 --name wolfssl --start 1 &> /dev/null
+
+# static version
+export LD_LIBRARY_PATH="./:${LD_LIBRARY_PATH:-}"
+python3 collect_pmc_features_mixer.py --target "./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 &> /dev/null
 ```
 
 
@@ -126,10 +134,16 @@ LD_DEBUG=libs $GLIBC/ld-linux-x86-64.so.2 \
 
 
 # python collector for static version
-  python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/src/.libs" ./testsuite/testsuite.test" --runs 5 --total 1 --name wolfssl --start 1 &> /dev/null
+
+
+  python3 collect_pmc_features.py \
+  --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD:$PWD/testsuite:$PWD/src/.libs" ./testsuite/testsuite.test" \
+  --runs 5 --total 1 --name wolfssl --start 1 &> result.log
 
 # python collector for shared version
-  python3 collect_pmc_features.py --target "$GLIBC/ld-linux-x86-64.so.2 --library-path "$GLIBC/lib:$GLIBC/lib64:$PWD/testsuite:$PWD/testsuite/.libs:$PWD/src/.libs" ./testsuite/.libs/testsuite.test" --runs 5 --total 10 --name wolfssl --start 1 &> /dev/null
+  python3 collect_pmc_features.py \
+  --target "$GLIBC/ld-linux-x86-64.so.2 --library-path $GLIBC/lib:$GLIBC/lib64:$PWD:$PWD/testsuite:$PWD/testsuite/.libs:$PWD/src/.libs ./testsuite/.libs/testsuite.test" \
+  --runs 5 --total 1 --name wolfssl --start 1 &> result.log
 ```
 
 
